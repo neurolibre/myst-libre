@@ -1,0 +1,35 @@
+[build-system]
+requires = ["setuptools", "setuptools-scm"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "myst_libre"
+dynamic = ["version"]
+description = "A Python library for managing source code repositories, interacting with Docker registries, handling MyST markdown operations, and spawning JupyterHub instances locally."
+authors = [
+    { name="agahkarakuzu", email="agahkarakuzu@gmail.com" }
+]
+readme = "README.md"
+license = { file = "LICENSE" }
+requires-python = ">=3.7"
+keywords = ["myst", "docker", "jupyterhub", "markdown", "repository"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+]
+dependencies = [
+    "requests",
+    "docker",
+    "python-dotenv",
+    "PyGithub",
+    "termcolor",
+    "mystmd"
+]
+
+[project.urls]
+Homepage = "https://github.com/agahkarakuzu/myst_libre"
+
+[tool.setuptools_scm]
+version_scheme = "post-release"
+local_scheme = "dirty-tag"
