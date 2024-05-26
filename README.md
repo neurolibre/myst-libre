@@ -3,10 +3,128 @@
 
 ![PyPI - Version](https://img.shields.io/pypi/v/myst-libre?style=flat&logo=python&logoColor=white&logoSize=8&labelColor=rgb(255%2C0%2C0)&color=white)
 
-## JupyterHub in Docker for MyST
+Following the [REES](https://repo2docker.readthedocs.io/en/latest/specification.html), `myst-libre` streamlines building [✨MyST articles✨](https://mystmd.org/) in containers.
 
-A small library to manage reproducible execution environments using Docker and JupyterHub 
-to build MyST articles in containers.
+* A repository containing MyST sources
+* A Docker image (built by [`binderhub`](https://github.com/jupyterhub/binderhub)) in a public (or private) registry, including:
+  * Dependencies to execute notebooks/markdown files in the MyST repository
+  * JupyterHub (typically part of images built by `binderhub`)
+* Input data required by the executable content (optional)
+
+Given these resources, myst-libre starts a Docker container, mounts the MyST repository and data (if available), and builds a MyST publication.
+
+> [!NOTE]
+> This project was started to support publishing MyST articles as living preprints on [`NeuroLibre`](https://neurolibre.org).
+
+## Installation
+
+### External dependencies 
+
+> [!IMPORTANT]
+> Ensure the following prerequisites are installed:
+
+- Node.js (For MyST)  [installation guide](https://mystmd.org/guide/installing-prerequisites)
+- Docker              [installation guide](https://docs.docker.com/get-docker/)
+
+### Install myst-libre
+
+```
+pip install myst-libre
+```
+
+**Set up environment variables:**
+
+If you are using a private image registry, create a `.env` file in the project root and add the following:
+
+```env
+DOCKER_PRIVATE_REGISTRY_USERNAME=your_username
+DOCKER_PRIVATE_REGISTRY_PASSWORD=your_password
+```
+
+## Quick Start
+
+**Import libraries and define REES resources**
+
+```python
+from myst_libre.tools import JupyterHubLocalSpawner, MystMD
+from myst_libre.rees import REES
+from myst_libre.builders import MystBuilder
+
+rees_resources = REES(dict(
+                  registry_url="https://your-registry.io",
+                  gh_user_repo_name = "owner/repository",
+                  gh_repo_commit_hash = "full_SHA_commit_A",
+                  binder_image_tag = "full_SHA_commit_A_or_B"))
+```
+
+> [!NOTE]
+> Currently, the assumption is that the Docker image was built by binderhub from a REES-compliant repository that also includes the MyST content. Therefore, `binder_image_tag` and `gh_repo_commit_hash` are simply two different commits in the same (`gh_repo_user_name`) repository. However, `binder_image_tag` is not allowed to be ahead of `gh_repo_commit_hash`.
+
+**Fetch resources and spawn JupyterHub in the respective container**
+
+```python
+hub = JupyterHubLocalSpawner(rees_resources,
+                             host_build_source_parent_dir = '/tmp/myst_repos',
+                             container_build_source_mount_dir = '/home/jovyan', #default
+                             host_data_parent_dir = "/tmp/myst_data", #optional
+                             container_data_mount_dir = '/home/jovyan/data', #optional
+                             )
+hub.spawn_jupyter_hub()
+```
+
+* MyST repository will be cloned at:
+
+```
+tmp/
+└── myst_repos/
+    └── owner/
+        └── repository/
+            └── full_commit_SHA_A/
+                ├── myst.yml
+                ├── _toc.yml
+                ├── binder/
+                │   ├── requirements.txt (or other REES dependencies)
+                │   └── data_requirement.json (optional)
+                ├── content/
+                │   ├── my_notebook.ipynb
+                │   └── my_myst_markdown.md
+                ├── paper.md
+                └── paper.bib
+```
+
+Repository will be mounted to the container as `/tmp/myst_repos/owner/repository/full_commit_SHA_A:/home/jovyan`.
+
+* If a [`repo2data`](https://github.com/SIMEXP/Repo2Data) manifest is found in the repository, the data will be downloaded to and cached at:
+
+```
+tmp/
+└── myst_data/
+    └── my-dataset
+```
+
+otherwise, it can be manually defined for an existing data under `/tmp/myst_data` as follows:
+
+```
+rees_resources.dataset_name = "my-dataset"
+```
+
+In either case, data will be mounted as `/tmp/myst_data/my-dataset:/home/jovyan/data/my-dataset`. If no data is provided, this step will be skipped.
+
+**Build your MyST article**
+
+```python
+MystBuilder(hub).build()
+```
+
+**Check out the built document**
+
+In your terminal:
+
+```
+npx serve /tmp/myst_repos/owner/repository/full_commit_SHA_A/_build/html
+```
+
+Visit ✨`http://localhost:3000`✨.
 
 ## Table of Contents
 
@@ -23,56 +141,6 @@ to build MyST articles in containers.
   - [Contributing](#contributing)
   - [License](#license)
 
-## Installation
-
-1. **Clone the repository:**
-    ```sh
-    git clone https://github.com/yourusername/myst_libre.git
-    cd myst_libre
-    ```
-
-2. **Create a virtual environment:**
-    ```sh
-    python -m venv venv
-    source venv/bin/activate  # On Windows use `venv\Scripts\activate`
-    ```
-
-3. **Install the required packages:**
-    ```sh
-    pip install -r requirements.txt
-    ```
-
-4. **Set up environment variables:**
-    Create a `.env` file in the project root and add the following:
-    ```env
-    DOCKER_PRIVATE_REGISTRY_USERNAME=your_username
-    DOCKER_PRIVATE_REGISTRY_PASSWORD=your_password
-    ```
-
-## External requirements
-
-- Node.js (For MyST)
-- Docker 
-
-## Quick Start
-
-```python
-from myst_libre.rees import REES
-from myst_libre.tools import JupyterHubLocalSpawner
-
-resources = REES(dict(registry_url="https://binder-registry.conp.cloud",
-                      gh_user_repo_name = "agahkarakuzu/mriscope",
-                      gh_repo_commit_hash = "6d3f64da214441bbb55b2005234fd4fd745fb372",
-                      binder_image_tag = "489ae0eb0d08fe30e45bc31201524a6570b9b7dd"))
-
-hub = JupyterHubLocalSpawner(resources,
-                             host_data_parent_dir = "~/neurolibre/mriscope/data",
-                             host_build_source_parent_dir = '~/Desktop/tmp',
-                             container_data_mount_dir = '/home/jovyan/data',
-                             container_build_source_mount_dir = '/home/jovyan')
-
-hub.spawn_jupyter_hub()
-```
 ## Usage
 
 ### Authentication

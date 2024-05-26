@@ -28,6 +28,7 @@ class BuildSourceManager(AbstractClass):
         self.repo_name = self.gh_user_repo_name.split('/')[1]
         now = datetime.now()
         self.created_at = now.strftime("%Y-%m-%dT%H:%M:%S")
+        self.dataset_name = ""
 
     def create_build_dir_host(self):
         """
@@ -81,7 +82,7 @@ class BuildSourceManager(AbstractClass):
         data_config_dir = os.path.join(self.build_dir, 'binder', 'data_requirement.json')
         with open(data_config_dir, 'r') as file:
             data = json.load(file)
-        return data['projectName']
+        self.dataset_name = data['projectName']
     
     def set_commit_info(self):
         self.binder_commit_info['datetime'] = self.repo_object.commit(self.binder_image_tag).committed_datetime

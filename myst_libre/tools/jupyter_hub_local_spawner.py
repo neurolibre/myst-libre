@@ -86,10 +86,15 @@ class JupyterHubLocalSpawner(AbstractClass):
 
         self.rees.git_clone_repo(self.host_build_source_parent_dir)
         self.rees.git_checkout_commit()
-
-        mnt_vol = {f'{os.path.join(self.host_data_parent_dir, self.rees.get_project_name())}': {'bind': os.path.join(self.container_data_mount_dir,self.rees.get_project_name()), 'mode': 'ro'},
-                   self.rees.build_dir: {'bind': f'{self.container_build_source_mount_dir}', 'mode': 'rw'}}
-
+        if not self.rees.dataset_name:
+            self.rees.get_project_name()
+        
+        if self.rees.dataset_name:
+            mnt_vol = {f'{os.path.join(self.host_data_parent_dir,self.rees.dataset_name)}': {'bind': os.path.join(self.container_data_mount_dir,self.rees.get_project_name()), 'mode': 'ro'},
+                    self.rees.build_dir: {'bind': f'{self.container_build_source_mount_dir}', 'mode': 'rw'}}
+        else:
+            mnt_vol = {self.rees.build_dir: {'bind': f'{self.container_build_source_mount_dir}', 'mode': 'rw'}}
+            
         self.rees.pull_image()
         self.jh_url = f"http://localhost:{self.port}"
         try:
