@@ -8,10 +8,6 @@ import re
 from .rest_client import RestClient
 from .authenticator import Authenticator
 from .decorators import request_set_decorator
-from dotenv import load_dotenv
-import os
-
-load_dotenv()
 
 class DockerRegistryClient(Authenticator):
     """

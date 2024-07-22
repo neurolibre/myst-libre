@@ -6,4 +6,5 @@ hashlib
 termcolor
 mystmd
 requests
+setuptools
 setuptools_scm
