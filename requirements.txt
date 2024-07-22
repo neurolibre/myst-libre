@@ -1,7 +1,9 @@
 dotenv
 PyGithub
+GitPython
 docker
 hashlib
 termcolor
 mystmd
 requests
+setuptools_scm
