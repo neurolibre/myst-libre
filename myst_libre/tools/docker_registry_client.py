@@ -23,12 +23,19 @@ class DockerRegistryClient(Authenticator):
     def __init__(self, **kwargs):
         for key, value in kwargs.items():
             setattr(self, key, value)
-        super().__init__()
+        
+        if hasattr(self, 'dotenvloc'):
+            super().__init__(self.dotenvloc)
+            self.rest_client = RestClient(self.dotenvloc)
+        else:
+            super().__init__()
+            self.rest_client = RestClient()
+
         self.registry_url_bare = self.registry_url.replace("http://", "").replace("https://", "")
         self.found_image_name = None
         self.found_image_tags = None
         self.docker_images = []
-        self.rest_client = RestClient()
+
 
     def get_token(self):
         """

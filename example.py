@@ -6,7 +6,8 @@ resources = REES(dict(
             registry_url="https://binder-registry.conp.cloud",
             gh_user_repo_name = "agahkarakuzu/mriscope",
             gh_repo_commit_hash = "ae64d9ed17e6ce66ecf94d585d7b68a19a435d70",
-            binder_image_tag = "489ae0eb0d08fe30e45bc31201524a6570b9b7dd"))
+            binder_image_tag = "489ae0eb0d08fe30e45bc31201524a6570b9b7dd",
+            dotenv = "/where/dotenv/is/located"))
 
 
 hub = JupyterHubLocalSpawner(resources,
