@@ -54,7 +54,8 @@ rees_resources = REES(dict(
                   registry_url="https://your-registry.io",
                   gh_user_repo_name = "owner/repository",
                   gh_repo_commit_hash = "full_SHA_commit_A",
-                  binder_image_tag = "full_SHA_commit_A_or_B"))
+                  binder_image_tag = "full_SHA_commit_A_or_B",
+                  dotenv = '/path/to/dotenv'))
 ```
 
 > [!NOTE]
