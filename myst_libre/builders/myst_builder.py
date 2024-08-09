@@ -6,7 +6,6 @@ class MystBuilder(AbstractClass):
         if not isinstance(hub, JupyterHubLocalSpawner):
             raise TypeError(f"Expected 'hub' to be an instance of JupyterHubLocalSpawner, got {type(hub).__name__} instead")
         super().__init__()
-        #aa = MystMD('/Users/agah/Desktop', {"anan":5})
         self.env_vars = {}
         self.build_dir = ""
         self.hub = hub

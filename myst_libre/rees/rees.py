@@ -26,6 +26,9 @@ class REES(DockerRegistryClient,BuildSourceManager):
         self.use_public_registry = False
         self.repo_commit_info = {}
         self.binder_commit_info = {}
+        # CHECK: This may not work properly without
+        # logging in to the registry on the host machine 
+        # which keeps that auth info on the config file. 
         self.docker_client = docker.from_env()
     
     def check_docker_installed(self):

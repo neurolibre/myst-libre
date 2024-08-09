@@ -90,8 +90,7 @@ class JupyterHubLocalSpawner(AbstractClass):
             self.rees.get_project_name()
         
         if self.rees.dataset_name:
-            print(self.container_data_mount_dir)
-            print(self.rees.dataset_name)
+            self.rees.repo2data_download(self.host_data_parent_dir)
             mnt_vol = {f'{os.path.join(self.host_data_parent_dir,self.rees.dataset_name)}': {'bind': os.path.join(self.container_data_mount_dir,self.rees.dataset_name), 'mode': 'ro'},
                     self.rees.build_dir: {'bind': f'{self.container_build_source_mount_dir}', 'mode': 'rw'}}
         else:

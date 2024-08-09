@@ -6,3 +6,4 @@ hashlib
 termcolor
 mystmd
 requests
+repo2data==2.9.2

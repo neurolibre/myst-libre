@@ -24,7 +24,8 @@ dependencies = [
     "python-dotenv",
     "PyGithub",
     "termcolor",
-    "mystmd"
+    "mystmd",
+    "repo2data"
 ]
 
 [project.urls]

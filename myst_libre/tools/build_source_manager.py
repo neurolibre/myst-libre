@@ -10,6 +10,7 @@ os.environ["GIT_PYTHON_REFRESH"] = "quiet"
 from git import Repo
 from datetime import datetime
 from myst_libre.abstract_class import AbstractClass
+from repo2data.repo2data import Repo2Data
 
 class BuildSourceManager(AbstractClass):
     """
@@ -84,6 +85,16 @@ class BuildSourceManager(AbstractClass):
             data = json.load(file)
         self.dataset_name = data['projectName']
     
+    def repo2data_download(self,target_directory):
+        data_req_path = os.path.join(self.build_dir, 'binder', 'data_requirement.json')
+        if not os.path.isfile(data_req_path):
+            self.logger.info(f'Skipping repo2data download')
+        else:
+            self.logger.info(f'Starting repo2data download')
+            repo2data = Repo2Data(data_req_path, server=True)
+            repo2data.set_server_dst_folder(target_directory)
+            repo2data.install()
+
     def set_commit_info(self):
         self.binder_commit_info['datetime'] = self.repo_object.commit(self.binder_image_tag).committed_datetime
         self.binder_commit_info['message'] = self.repo_object.commit(self.binder_image_tag).message
