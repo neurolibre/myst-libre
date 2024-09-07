@@ -3,6 +3,7 @@ from myst_libre.tools.docker_registry_client import DockerRegistryClient
 from myst_libre.tools.build_source_manager import BuildSourceManager
 import docker
 import subprocess
+import os
 
 class REES(DockerRegistryClient,BuildSourceManager):
     def __init__(self, rees_dict):
@@ -39,7 +40,7 @@ class REES(DockerRegistryClient,BuildSourceManager):
             EnvironmentError: If Docker is not installed or not found in PATH.
         """
         try:
-            result = subprocess.run(['docker', '--version'], capture_output=True, text=True, check=True)
+            result = subprocess.run(['docker', '--version'], env=os.environ, capture_output=True, text=True, check=True)
             self.cprint(f"✓ Docker is installed: {result.stdout.strip()}",'green')
         except subprocess.CalledProcessError as e:
             raise EnvironmentError("Docker is not installed or not found in PATH. Please install Docker to proceed.") from e

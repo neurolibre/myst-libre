@@ -40,7 +40,7 @@ class MystMD(AbstractClass):
             EnvironmentError: If Node.js is not installed or not found in PATH.
         """
         try:
-            result = subprocess.run(['node', '--version'], capture_output=True, text=True, check=True)
+            result = subprocess.run(['node', '--version'],env=os.environ, capture_output=True, text=True, check=True)
             self.cprint(f"✓ Node.js is installed: {result.stdout.strip()}","green")
         except subprocess.CalledProcessError as e:
             raise EnvironmentError("Node.js is not installed or not found in PATH. Please install Node.js to proceed.") from e
@@ -53,7 +53,7 @@ class MystMD(AbstractClass):
             EnvironmentError: If MyST markdown tool is not installed or not found in PATH.
         """
         try:
-            result = subprocess.run([self.executable, '--version'], capture_output=True, text=True, check=True)
+            result = subprocess.run([self.executable, '--version'],env=os.environ, capture_output=True, text=True, check=True)
             self.cprint(f"✓ mystmd is installed: {result.stdout.strip()}","green")
         except subprocess.CalledProcessError as e:
             raise EnvironmentError(f"{self.executable} is not installed or not found in PATH. Please install mystmd to proceed.") from e
