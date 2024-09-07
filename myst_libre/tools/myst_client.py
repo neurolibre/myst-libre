@@ -29,8 +29,9 @@ class MystMD(AbstractClass):
         self.build_dir = build_dir
         self.env_vars = env_vars
         self.cprint(f"␤[Preflight checks]","light_grey")
-        self.check_node_installed()
-        self.check_mystmd_installed()
+        self.cprint(f"{os.environ}","light_grey")
+        #self.check_node_installed()
+        #self.check_mystmd_installed()
 
     def check_node_installed(self):
         """
