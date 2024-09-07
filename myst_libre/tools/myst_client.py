@@ -40,10 +40,22 @@ class MystMD(AbstractClass):
             EnvironmentError: If Node.js is not installed or not found in PATH.
         """
         try:
-            result = subprocess.run(['node', '--version'],env=os.environ, capture_output=True, text=True, check=True)
-            self.cprint(f"✓ Node.js is installed: {result.stdout.strip()}","green")
+            process = subprocess.Popen(['node', '--version'], 
+                                    env=os.environ, 
+                                    stdout=subprocess.PIPE, 
+                                    stderr=subprocess.PIPE, 
+                                    text=True)
+            stdout, stderr = process.communicate()
+            if process.returncode != 0:
+                raise subprocess.CalledProcessError(process.returncode, process.args, stdout, stderr)
+            
+            self.cprint(f"✓ Node.js is installed: {stdout.strip()}", "green")
         except subprocess.CalledProcessError as e:
-            raise EnvironmentError("Node.js is not installed or not found in PATH. Please install Node.js to proceed.") from e
+            self.cprint(f"✗ Error checking Node.js version: {e.stderr.strip()}", "red")
+            raise
+        except Exception as e:
+            self.cprint(f"✗ Unexpected error occurred: {str(e)}", "red")
+            raise
 
     def check_mystmd_installed(self):
         """
@@ -53,10 +65,21 @@ class MystMD(AbstractClass):
             EnvironmentError: If MyST markdown tool is not installed or not found in PATH.
         """
         try:
-            result = subprocess.run([self.executable, '--version'],env=os.environ, capture_output=True, text=True, check=True)
-            self.cprint(f"✓ mystmd is installed: {result.stdout.strip()}","green")
+            process = subprocess.Popen([self.executable, '--version'], 
+                            env=os.environ, 
+                            stdout=subprocess.PIPE, 
+                            stderr=subprocess.PIPE, 
+                            text=True)
+            stdout, stderr = process.communicate()
+            if process.returncode != 0:
+                raise subprocess.CalledProcessError(process.returncode, process.args, stdout, stderr)
+            self.cprint(f"✓ mystmd is installed: {stdout.strip()}","green")
         except subprocess.CalledProcessError as e:
-            raise EnvironmentError(f"{self.executable} is not installed or not found in PATH. Please install mystmd to proceed.") from e
+            self.cprint(f"✗ Error checking myst version: {e.stderr.strip()}", "red")
+            raise
+        except Exception as e:
+            self.cprint(f"✗ Unexpected error occurred: {str(e)}", "red")
+            raise
         
     def run_command(self, *args, env_vars={}):
         """
