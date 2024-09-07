@@ -14,6 +14,9 @@ class MystBuilder(AbstractClass):
                          "port":f"{self.hub.port}"
                          }
         self.myst_client = MystMD(hub.rees.build_dir, self.env_vars)
+    
+    def setenv(self,key,value):
+        self.env_vars[key] = value
 
     def build(self):
         self.cprint(f'Starting MyST build {self.hub.jh_url}','yellow')

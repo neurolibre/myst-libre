@@ -78,9 +78,9 @@ class JupyterHubLocalSpawner(AbstractClass):
         self.jh_token = h.hexdigest()
 
         if not self.rees.search_img_by_repo_name():
-            raise Exception(f"[ERROR] A docker image has not been found for {self.rees.gh_user_repo_name} at {self.binder_image_tag}.")
+            raise Exception(f"[ERROR] A docker image has not been found for {self.rees.gh_user_repo_name} at {self.rees.binder_image_tag}.")
         if self.rees.binder_image_tag not in self.rees.found_image_tags:
-            raise Exception(f"[ERROR] A docker image exists for {self.rees.gh_user_repo_name}, yet the tag {self.binder_image_tag} is missing.")
+            raise Exception(f"[ERROR] A docker image exists for {self.rees.gh_user_repo_name}, yet the tag {self.rees.binder_image_tag} is missing.")
         
         # self.rees.found_image_name is assigned if above not fails
 
