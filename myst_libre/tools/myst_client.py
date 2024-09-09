@@ -142,6 +142,18 @@ class MystMD(AbstractClass):
         env = os.environ.copy()
         self.env_vars.update(env)
         return self.run_command('build', '--execute', '--html',env_vars=self.env_vars)
+
+    def build_site(self):
+        """
+        Build the MyST markdown project.
+        
+        Returns:
+            str: Command output or None if failed.
+        """
+        os.chdir(self.build_dir)
+        env = os.environ.copy()
+        self.env_vars.update(env)
+        return self.run_command('build', '--site',env_vars=self.env_vars)
     
     def convert(self, input_file, output_file):
         """
