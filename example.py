@@ -19,4 +19,4 @@ hub = JupyterHubLocalSpawner(resources,
 
 hub.spawn_jupyter_hub()
 
-MystBuilder(hub).build()
+MystBuilder(hub).build_site()
