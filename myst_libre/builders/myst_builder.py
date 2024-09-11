@@ -22,6 +22,10 @@ class MystBuilder(AbstractClass):
         self.cprint(f'Starting MyST build {self.hub.jh_url}','yellow')
         self.myst_client.build()
 
+    def build_noexecute(self):
+        self.cprint(f'Starting MyST build {self.hub.jh_url}','yellow')
+        self.myst_client.build_noexecute()
+
     def build_site(self):
         self.cprint(f'Starting MyST build site {self.hub.jh_url}','yellow')
         self.myst_client.build_site()
