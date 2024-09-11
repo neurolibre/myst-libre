@@ -142,6 +142,17 @@ class MystMD(AbstractClass):
         self.cprint(f"--> Self env vars {self.env_vars}", "green")
         return self.run_command('build', '--execute', '--html',env_vars=self.env_vars)
 
+    def build_noexecute(self):
+        """
+        Build the MyST markdown project.
+        
+        Returns:
+            str: Command output or None if failed.
+        """
+        os.chdir(self.build_dir)
+        self.cprint(f"--> Self env vars {self.env_vars}", "green")
+        return self.run_command('build','--html',env_vars=self.env_vars)
+
     def build_site(self):
         """
         Build the MyST markdown project.

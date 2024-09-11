@@ -53,10 +53,10 @@ class BuildSourceManager(AbstractClass):
         self.host_build_source_parent_dir = clone_parent_directory
         self.build_dir = os.path.join(self.host_build_source_parent_dir, self.username, self.repo_name, self.gh_repo_commit_hash)
         if self.create_build_dir_host():
-            self.logger.info(f'Cloning into {self.build_dir}')
+            self.cprint(f'Cloning into {self.build_dir}', "green")
             self.repo_object = Repo.clone_from(f'{self.provider}/{self.gh_user_repo_name}', self.build_dir)
         else:
-            self.logger.warning(f'Source {self.build_dir} already exists.')
+            self.cprint(f'Source {self.build_dir} already exists.', "yellow")
             self.repo_object = Repo(self.build_dir)
         
         self.set_commit_info()
@@ -69,7 +69,7 @@ class BuildSourceManager(AbstractClass):
         Returns:
             bool: True if checked out successfully.
         """
-        self.logger.info(f'Checking out {self.gh_repo_commit_hash}')
+        self.cprint(f'Checking out {self.gh_repo_commit_hash}', "green")
         self.repo_object.git.checkout(self.gh_repo_commit_hash)
         return True
 
@@ -88,9 +88,9 @@ class BuildSourceManager(AbstractClass):
     def repo2data_download(self,target_directory):
         data_req_path = os.path.join(self.build_dir, 'binder', 'data_requirement.json')
         if not os.path.isfile(data_req_path):
-            self.logger.info(f'Skipping repo2data download')
+            self.cprint(f'Skipping repo2data download', "yellow")
         else:
-            self.logger.info(f'Starting repo2data download')
+            self.cprint(f'Starting repo2data download', "green")
             repo2data = Repo2Data(data_req_path, server=True)
             repo2data.set_server_dst_folder(target_directory)
             repo2data.install()
