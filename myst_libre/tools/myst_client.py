@@ -131,37 +131,19 @@ class MystMD(AbstractClass):
             print(f"Unexpected error: {e}")
             return None
     
-    def build(self):
+    def build(self, *args):
         """
-        Build the MyST markdown project.
+        Build the MyST markdown project with specified arguments.
+        
+        Args:
+            *args: Variable length argument list for the myst command.
         
         Returns:
             str: Command output or None if failed.
         """
         os.chdir(self.build_dir)
         self.cprint(f"--> Self env vars {self.env_vars}", "green")
-        return self.run_command('build', '--execute', '--html',env_vars=self.env_vars)
-
-    def build_noexecute(self):
-        """
-        Build the MyST markdown project.
-        
-        Returns:
-            str: Command output or None if failed.
-        """
-        os.chdir(self.build_dir)
-        self.cprint(f"--> Self env vars {self.env_vars}", "green")
-        return self.run_command('build','--html',env_vars=self.env_vars)
-
-    def build_site(self):
-        """
-        Build the MyST markdown project.
-        
-        Returns:
-            str: Command output or None if failed.
-        """
-        os.chdir(self.build_dir)
-        return self.run_command('build', '--site',env_vars=self.env_vars)
+        return self.run_command(*args, env_vars=self.env_vars)
     
     def convert(self, input_file, output_file):
         """
