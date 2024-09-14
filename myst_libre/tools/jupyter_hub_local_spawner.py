@@ -78,9 +78,9 @@ class JupyterHubLocalSpawner(AbstractClass):
         self.jh_token = h.hexdigest()
 
         if jb_build_command:
-           this_entrypoint = f"jupyter-book build --all --verbose --path-output {self.host_build_source_parent_dir} content 2>&1 | tee -a jupyter_book_build.log"
+            this_entrypoint = f"/bin/sh -c 'jupyter-book build --all --verbose --path-output {self.container_build_source_mount_dir} content 2>&1 | tee -a jupyter_book_build.log'"
         else:
-           this_entrypoint = f'jupyter server --allow-root --ip 0.0.0.0 --log-level=DEBUG --IdentityProvider.token="{self.jh_token}" --ServerApp.port="{self.port}"'
+            this_entrypoint = f'jupyter server --allow-root --ip 0.0.0.0 --log-level=DEBUG --IdentityProvider.token="{self.jh_token}" --ServerApp.port="{self.port}"'
 
         if not self.rees.search_img_by_repo_name():
             raise Exception(f"[ERROR] A docker image has not been found for {self.rees.gh_user_repo_name} at {self.rees.binder_image_tag}.")
