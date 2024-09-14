@@ -68,7 +68,7 @@ class JupyterHubLocalSpawner(AbstractClass):
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
             return s.connect_ex(('127.0.0.1', port)) == 0
 
-    def spawn_jupyter_hub(self):
+    def spawn_jupyter_hub(self,jb_build_command=None):
         """
         Spawn a JupyterHub instance.
         """
@@ -76,6 +76,11 @@ class JupyterHubLocalSpawner(AbstractClass):
         h = blake2b(digest_size=20)
         h.update(os.urandom(20))
         self.jh_token = h.hexdigest()
+
+        if jb_build_command:
+           this_entrypoint = f"jupyter-book build --all --verbose --path-output {self.host_build_source_parent_dir} content 2>&1 | tee -a jupyter_book_build.log"
+        else:
+           this_entrypoint = f'jupyter server --allow-root --ip 0.0.0.0 --log-level=DEBUG --IdentityProvider.token="{self.jh_token}" --ServerApp.port="{self.port}"'
 
         if not self.rees.search_img_by_repo_name():
             raise Exception(f"[ERROR] A docker image has not been found for {self.rees.gh_user_repo_name} at {self.rees.binder_image_tag}.")
@@ -103,7 +108,7 @@ class JupyterHubLocalSpawner(AbstractClass):
                 self.rees.docker_image,
                 ports={f'{self.port}/tcp': self.port},
                 environment={"JUPYTER_TOKEN": f'{self.jh_token}',"port": f'{self.port}',"JUPYTER_BASE_URL": f'{self.jh_url}'},
-                entrypoint=f'jupyter server --allow-root --ip 0.0.0.0 --log-level=DEBUG --IdentityProvider.token="{self.jh_token}" --ServerApp.port="{self.port}"',
+                entrypoint= this_entrypoint,
                 volumes=mnt_vol,
                 detach=True)
             logging.info(f'Jupyter hub is {self.container.status}')
