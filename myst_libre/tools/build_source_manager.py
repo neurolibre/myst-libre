@@ -96,15 +96,20 @@ class BuildSourceManager(AbstractClass):
             repo2data.install()
 
     def set_commit_info(self):
-        self.binder_commit_info['datetime'] = self.repo_object.commit(self.binder_image_tag).committed_datetime
-        self.binder_commit_info['message'] = self.repo_object.commit(self.binder_image_tag).message
+        if self.binder_image_name:
+            self.binder_commit_info['datetime'] = "20 November 2024"
+            self.binder_commit_info['message'] =  "Base runtime from myst-libre"
+        else:
+            self.binder_commit_info['datetime'] = self.repo_object.commit(self.binder_image_tag).committed_datetime
+            self.binder_commit_info['message'] = self.repo_object.commit(self.binder_image_tag).message
         self.repo_commit_info['datetime'] = self.repo_object.commit(self.gh_repo_commit_hash).committed_datetime
         self.repo_commit_info['message'] = self.repo_object.commit(self.gh_repo_commit_hash).message
         self.validate_commits()
 
     def validate_commits(self):
-        if self.repo_commit_info['datetime'] < self.binder_commit_info['datetime']:
-            raise ValueError("The repo commit datetime cannot be older than the binder commit datetime.")
+        if not self.binder_image_name:
+            if self.repo_commit_info['datetime'] < self.binder_commit_info['datetime']:
+                raise ValueError("The repo commit datetime cannot be older than the binder commit datetime.")
 
     def create_latest_symlink(self):
         """
