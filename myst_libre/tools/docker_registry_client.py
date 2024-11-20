@@ -58,9 +58,17 @@ class DockerRegistryClient(Authenticator):
         
         Returns:
             bool: True if image found, else False.
+        
+        Assuming use in rees, TODO refactored for clarity:
+            binder_image_name
+            gh_user_repo_name 
         """
         self.get_image_list()
-        user_repo_formatted = self.gh_user_repo_name.replace('-', '-2d').replace('_', '-5f').replace('/', '-2d')
+        if self.binder_image_name:
+            src_name = self.binder_image_name
+        else:
+            src_name = self.gh_user_repo_name
+        user_repo_formatted = src_name.replace('-', '-2d').replace('_', '-5f').replace('/', '-2d')
         pattern = f'{self.registry_url_bare}/binder-{user_repo_formatted}.*'
         for image in self.docker_images:
             if re.match(pattern, image):

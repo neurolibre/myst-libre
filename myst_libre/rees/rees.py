@@ -12,7 +12,8 @@ class REES(DockerRegistryClient,BuildSourceManager):
         self.gh_user_repo_name = rees_dict['gh_user_repo_name']
         self.gh_repo_commit_hash = rees_dict['gh_repo_commit_hash']
         self.binder_image_tag = rees_dict['binder_image_tag']
-
+        self.binder_image_name = rees_dict.get('binder_image_name', None)
+        
         if 'dotenv' in rees_dict.keys():
             self.dotenvloc = rees_dict['dotenv']
 
