@@ -82,7 +82,7 @@ class MystMD(AbstractClass):
             self.cprint(f"✗ Unexpected error occurred: {str(e)}", "red")
             raise
         
-    def run_command(self, *args, env_vars={}):
+    def run_command(self, *args, env_vars={},user=None,group=None):
         """
         Run a command using the MyST executable.
         
@@ -99,7 +99,15 @@ class MystMD(AbstractClass):
             env = os.environ.copy()
             env.update(env_vars)
 
-            process = subprocess.Popen(command, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            if user and group:
+                uid = os.getpwnam(user).pw_uid  
+                gid = os.getgrnam(group).gr_gid
+                process = subprocess.Popen(command, env=env, 
+                                           preexec_fn=lambda: os.setgid(gid) or os.setuid(uid),
+                                           stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            else:
+                process = subprocess.Popen(command, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            
             output = []
             error_output = []
 
@@ -131,7 +139,7 @@ class MystMD(AbstractClass):
             print(f"Unexpected error: {e}")
             return None
     
-    def build(self, *args):
+    def build(self, *args, user=None, group=None):
         """
         Build the MyST markdown project with specified arguments.
         
@@ -143,9 +151,9 @@ class MystMD(AbstractClass):
         """
         os.chdir(self.build_dir)
         self.cprint(f"--> Self env vars {self.env_vars}", "green")
-        return self.run_command(*args, env_vars=self.env_vars)
+        return self.run_command(*args, env_vars=self.env_vars, user=user, group=group)
     
-    def convert(self, input_file, output_file):
+    def convert(self, input_file, output_file, user=None, group=None):
         """
         Convert a MyST markdown file to another format.
         
@@ -156,4 +164,4 @@ class MystMD(AbstractClass):
         Returns:
             str: Command output or None if failed.
         """
-        return self.run_command('convert', input_file, '-o', output_file,env_vars=[])
+        return self.run_command('convert', input_file, '-o', output_file,env_vars=self.env_vars, user=user, group=group)
