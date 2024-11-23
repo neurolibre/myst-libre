@@ -8,6 +8,7 @@ import subprocess
 import os
 from myst_libre.abstract_class import AbstractClass
 import sys
+import grp, pwd
 
 class MystMD(AbstractClass):
     """
@@ -100,8 +101,8 @@ class MystMD(AbstractClass):
             env.update(env_vars)
 
             if user and group:
-                uid = os.getpwnam(user).pw_uid  
-                gid = os.getgrnam(group).gr_gid
+                uid = pwd.getpwnam(user).pw_uid  
+                gid = grp.getgrnam(group).gr_gid
                 process = subprocess.Popen(command, env=env, 
                                            preexec_fn=lambda: os.setgid(gid) or os.setuid(uid),
                                            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
