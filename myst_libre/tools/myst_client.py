@@ -100,14 +100,20 @@ class MystMD(AbstractClass):
             env = os.environ.copy()
             env.update(env_vars)
 
+            # Debug information
+            self.cprint(f"🐞 Running command from directory: {os.getcwd()}", "light_grey")
+            self.cprint(f"🐞 Set cwd to: {self.build_dir}", "light_grey")
+            self.cprint(f"🐞 Command: {' '.join(command)}", "light_grey")
+
             if user and group:
                 uid = pwd.getpwnam(user).pw_uid  
                 gid = grp.getgrnam(group).gr_gid
                 process = subprocess.Popen(command, env=env, 
                                            preexec_fn=lambda: os.setgid(gid) or os.setuid(uid),
-                                           stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+                                           stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+                                           cwd=self.build_dir)
             else:
-                process = subprocess.Popen(command, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+                process = subprocess.Popen(command, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, cwd=self.build_dir)
             
             output = []
             error_output = []
