@@ -39,7 +39,7 @@ class BuildSourceManager(AbstractClass):
             bool: True if directory created, else False.
         """
         if not os.path.exists(self.build_dir):
-            os.makedirs(self.build_dir)
+            os.makedirs(self.build_dir, exist_ok=True)
             return True
         return False
 
@@ -52,12 +52,14 @@ class BuildSourceManager(AbstractClass):
         """
         self.host_build_source_parent_dir = clone_parent_directory
         self.build_dir = os.path.join(self.host_build_source_parent_dir, self.username, self.repo_name, self.gh_repo_commit_hash)
-        if self.create_build_dir_host():
-            self.cprint(f'Cloning into {self.build_dir}', "green")
-            self.repo_object = Repo.clone_from(f'{self.provider}/{self.gh_user_repo_name}', self.build_dir)
-        else:
+        
+        if os.path.exists(self.build_dir):
             self.cprint(f'Source {self.build_dir} already exists.', "yellow")
             self.repo_object = Repo(self.build_dir)
+        else:
+            os.makedirs(os.path.dirname(self.build_dir), exist_ok=True)
+            self.cprint(f'Cloning into {self.build_dir}', "green")
+            self.repo_object = Repo.clone_from(f'{self.provider}/{self.gh_user_repo_name}', self.build_dir)
         
         self.set_commit_info()
         self.validate_commits()

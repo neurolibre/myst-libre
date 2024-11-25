@@ -128,7 +128,10 @@ class JupyterHubLocalSpawner(AbstractClass):
             self.cprint(f'     ├───────── ✸ {self.rees.pull_image_name}','light_blue')
             self.cprint(f'     ├───────── ⎌ {self.rees.binder_image_tag}','light_blue')
             self.cprint(f"     ├───────── ⏲ {self.rees.binder_commit_info['datetime']}: {self.rees.binder_commit_info['message']}".replace('\n', ''),'light_blue')
-            self.cprint(f'     └───────── ℹ This image was built from REES-compliant {self.rees.gh_user_repo_name} repository at the commit above','yellow')
+            if self.rees.binder_image_name:
+                self.cprint(f'     └───────── ℹ Using NeuroLibre base image {self.rees.binder_image_name}','yellow')
+            else:    
+                self.cprint(f'     └───────── ℹ This image was built from REES-compliant {self.rees.gh_user_repo_name} repository at the commit above','yellow')
         except Exception as e:
             logging.error(f'Could not spawn a JH: \n {e}')
 
