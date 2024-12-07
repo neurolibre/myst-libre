@@ -83,7 +83,7 @@ class MystMD(AbstractClass):
             self.cprint(f"✗ Unexpected error occurred: {str(e)}", "red")
             raise
         
-    def run_command(self, *args, env_vars={},user=None,group=None):
+    def run_command(self, *args, env_vars={}, user=None, group=None):
         """
         Run a command using the MyST executable.
         
@@ -136,15 +136,18 @@ class MystMD(AbstractClass):
             if process.returncode != 0:
                 raise subprocess.CalledProcessError(process.returncode, command, output='\n'.join(output), stderr='\n'.join(error_output))
 
-            return ''.join(output)
+            # Capture the output in a variable for logging
+            command_output = ''.join(output)
+
+            return command_output
         except subprocess.CalledProcessError as e:
             print(f"Error running command: {e}")
             print(f"Command output: {e.output}")
             print(f"Error output: {e.stderr}")
-            return None
+            return None, e.stderr 
         except Exception as e:
             print(f"Unexpected error: {e}")
-            return None
+            return None, str(e)
     
     def build(self, *args, user=None, group=None):
         """
