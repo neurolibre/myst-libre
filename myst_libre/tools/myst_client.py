@@ -141,10 +141,10 @@ class MystMD(AbstractClass):
             print(f"Error running command: {e}")
             print(f"Command output: {e.output}")
             print(f"Error output: {e.stderr}")
-            return None, e.stderr 
+            return "Error", e.stderr 
         except Exception as e:
             print(f"Unexpected error: {e}")
-            return None, str(e)
+            return "Error", str(e)
     
     def build(self, *args, user=None, group=None):
         """
@@ -157,14 +157,12 @@ class MystMD(AbstractClass):
             str: Command output or None if failed.
         """
         os.chdir(self.build_dir)
-        self.cprint(f"--> Self env vars {self.env_vars}", "green")
+        #self.cprint(f"--> Self env vars {self.env_vars}", "green")
         stdout_log, stderr_log = self.run_command(*args, env_vars=self.env_vars, user=user, group=group)
-        self.cprint(f"🐞 Command output: {stdout_log}", "light_grey")
+        #self.cprint(f"🐞 Command output: {stdout_log}", "light_grey")
         if stderr_log is not None:
-            combined_log = stdout_log + stderr_log
-        else:
-            combined_log = stderr_log
-        return combined_log
+            stdout_log += stderr_log
+        return stdout_log
     
     def convert(self, input_file, output_file, user=None, group=None):
         """
