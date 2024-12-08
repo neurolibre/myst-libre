@@ -114,32 +114,18 @@ class MystMD(AbstractClass):
                                            cwd=self.build_dir)
             else:
                 process = subprocess.Popen(command, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, cwd=self.build_dir)
-            
-            output = []
-            error_output = []
 
             # Stream stdout and stderr in real-time
-            while True:
-                stdout_line = process.stdout.readline()
-                stderr_line = process.stderr.readline()
-                if not stdout_line and not stderr_line and process.poll() is not None:
-                    break
-                if stdout_line:
-                    print(stdout_line, end='')
-                    output.append(stdout_line)
-                if stderr_line:
-                    print(stderr_line, end='', file=sys.stderr)
-                    error_output.append(stderr_line)
+            stdout_log, stderr_log = process.communicate()
                     
             process.wait()
 
             if process.returncode != 0:
-                raise subprocess.CalledProcessError(process.returncode, command, output='\n'.join(output), stderr='\n'.join(error_output))
+                raise subprocess.CalledProcessError(process.returncode, command, output=stdout_log, stderr=stderr_log)
 
-            # Capture the output in a variable for logging
-            command_output = ''.join(output)
+            self.cprint(f"🐞 Command output: {stdout_log}", "light_grey")
+            return stdout_log
 
-            return command_output
         except subprocess.CalledProcessError as e:
             print(f"Error running command: {e}")
             print(f"Command output: {e.output}")
