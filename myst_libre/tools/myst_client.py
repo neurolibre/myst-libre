@@ -115,9 +115,25 @@ class MystMD(AbstractClass):
             else:
                 process = subprocess.Popen(command, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, cwd=self.build_dir)
 
-            # Stream stdout and stderr in real-time
-            stdout_log, stderr_log = process.communicate()
-                    
+            stdout_log = ""
+            stderr_log = ""
+            # Stream stdout in real-time
+            while True:
+                output = process.stdout.readline()
+                if output == b"" and process.poll() is not None:
+                    break
+                if output:
+                    stdout_log += output.decode()
+                    self.cprint(output.decode(), "light_grey")  # Print stdout in real-time
+
+            while True:
+                error = process.stderr.readline()
+                if error == b"" and process.poll() is not None:
+                    break
+                if error:
+                    stderr_log += error.decode()
+                    self.cprint(error.decode(), "red")  # Print stderr in real-time
+
             process.wait()
 
             if process.returncode != 0:
