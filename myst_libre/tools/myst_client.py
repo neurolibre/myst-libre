@@ -158,7 +158,13 @@ class MystMD(AbstractClass):
         """
         os.chdir(self.build_dir)
         self.cprint(f"--> Self env vars {self.env_vars}", "green")
-        return self.run_command(*args, env_vars=self.env_vars, user=user, group=group)
+        stdout_log, stderr_log = self.run_command(*args, env_vars=self.env_vars, user=user, group=group)
+        self.cprint(f"🐞 Command output: {stdout_log}", "light_grey")
+        if stderr_log is not None:
+            combined_log = stdout_log + stderr_log
+        else:
+            combined_log = stderr_log
+        return combined_log
     
     def convert(self, input_file, output_file, user=None, group=None):
         """
