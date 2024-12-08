@@ -115,32 +115,27 @@ class MystMD(AbstractClass):
             else:
                 process = subprocess.Popen(command, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, cwd=self.build_dir)
 
+            # Initialize logs
             stdout_log = ""
             stderr_log = ""
             # Stream stdout in real-time
             while True:
                 output = process.stdout.readline()
-                if output == b"" and process.poll() is not None:
+                if output == "" and process.poll() is not None:
                     break
                 if output:
-                    stdout_log += output.decode()
-                    self.cprint(output.decode(), "light_grey")  # Print stdout in real-time
-
+                    stdout_log += output  # No need to decode
+                    self.cprint(output, "light_grey")  # Print stdout in real-time
+            # Stream stderr in real-time
             while True:
                 error = process.stderr.readline()
-                if error == b"" and process.poll() is not None:
+                if error == "" and process.poll() is not None:
                     break
                 if error:
-                    stderr_log += error.decode()
-                    self.cprint(error.decode(), "red")  # Print stderr in real-time
-
+                    stderr_log += error  # No need to decode
+                    self.cprint(error, "red")  # Print stderr in real-time
             process.wait()
-
-            if process.returncode != 0:
-                raise subprocess.CalledProcessError(process.returncode, command, output=stdout_log, stderr=stderr_log)
-
-            self.cprint(f"🐞 Command output: {stdout_log}", "light_grey")
-            return stdout_log
+            return stdout_log, stderr_log  # Return both logs
 
         except subprocess.CalledProcessError as e:
             print(f"Error running command: {e}")
