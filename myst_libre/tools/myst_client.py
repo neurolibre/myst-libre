@@ -157,9 +157,7 @@ class MystMD(AbstractClass):
             str: Command output or None if failed.
         """
         os.chdir(self.build_dir)
-        #self.cprint(f"--> Self env vars {self.env_vars}", "green")
         stdout_log, stderr_log = self.run_command(*args, env_vars=self.env_vars, user=user, group=group)
-        #self.cprint(f"🐞 Command output: {stdout_log}", "light_grey")
         if stderr_log is not None:
             stdout_log += stderr_log
         return stdout_log

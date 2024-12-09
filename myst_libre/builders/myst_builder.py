@@ -31,4 +31,5 @@ class MystBuilder(AbstractClass):
             self.cprint(f'Starting MyST build {self.hub.jh_url}','yellow')
         else:
             self.cprint(f'Starting MyST build no exec.','yellow')
-        self.myst_client.build('build',*args,user=user,group=group)
+        logs = self.myst_client.build('build',*args,user=user,group=group)
+        return logs

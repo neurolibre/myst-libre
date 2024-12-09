@@ -68,10 +68,11 @@ class JupyterHubLocalSpawner(AbstractClass):
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
             return s.connect_ex(('127.0.0.1', port)) == 0
 
-    def spawn_jupyter_hub(self,jb_build_command=None):
+    def spawn_jupyter_hub(self, jb_build_command=None):
         """
         Spawn a JupyterHub instance.
         """
+        output_logs = []  # Collect logs and cprints here
         self.port = self.find_open_port()
         h = blake2b(digest_size=20)
         h.update(os.urandom(20))
@@ -96,8 +97,8 @@ class JupyterHubLocalSpawner(AbstractClass):
         
         if self.rees.dataset_name:
             self.rees.repo2data_download(self.host_data_parent_dir)
-            mnt_vol = {f'{os.path.join(self.host_data_parent_dir,self.rees.dataset_name)}': {'bind': os.path.join(self.container_data_mount_dir,self.rees.dataset_name), 'mode': 'ro'},
-                    self.rees.build_dir: {'bind': f'{self.container_build_source_mount_dir}', 'mode': 'rw'}}
+            mnt_vol = {f'{os.path.join(self.host_data_parent_dir, self.rees.dataset_name)}': {'bind': os.path.join(self.container_data_mount_dir, self.rees.dataset_name), 'mode': 'ro'},
+                        self.rees.build_dir: {'bind': f'{self.container_build_source_mount_dir}', 'mode': 'rw'}}
         else:
             mnt_vol = {self.rees.build_dir: {'bind': f'{self.container_build_source_mount_dir}', 'mode': 'rw'}}
             
@@ -107,33 +108,46 @@ class JupyterHubLocalSpawner(AbstractClass):
             self.container = self.rees.docker_client.containers.run(
                 self.rees.docker_image,
                 ports={f'{self.port}/tcp': self.port},
-                environment={"JUPYTER_TOKEN": f'{self.jh_token}',"port": f'{self.port}',"JUPYTER_BASE_URL": f'{self.jh_url}'},
-                entrypoint= this_entrypoint,
+                environment={"JUPYTER_TOKEN": f'{self.jh_token}', "port": f'{self.port}', "JUPYTER_BASE_URL": f'{self.jh_url}'},
+                entrypoint=this_entrypoint,
                 volumes=mnt_vol,
                 detach=True)
             logging.info(f'Jupyter hub is {self.container.status}')
-            self.cprint(f'␤[Status]', 'light_grey')
-            self.cprint(f' ├─────── ⏺ running', 'green')
-            self.cprint(f' └─────── Container {self.container.short_id} {self.container.name}', 'green')
-            self.cprint(f' ℹ Run the following commands in the terminal if you are debugging locally:', 'yellow')
-            self.cprint(f' port=\"{self.port}\"', 'cyan')
-            self.cprint(f' export JUPYTER_BASE_URL=\"{self.jh_url}\"', 'cyan')
-            self.cprint(f' export JUPYTER_TOKEN=\"{self.jh_token}\"', 'cyan')
-            self.cprint(f'␤[Resources]', 'light_grey')
-            self.cprint(f' ├── MyST repository', 'magenta')
-            self.cprint(f' │   ├───────── ✸ {self.rees.gh_user_repo_name}','light_blue')
-            self.cprint(f' │   ├───────── ⎌ {self.rees.gh_repo_commit_hash}','light_blue')
-            self.cprint(f" │   └───────── ⏲ {self.rees.repo_commit_info['datetime']}: {self.rees.repo_commit_info['message']}".replace('\n', ''),'light_blue')
-            self.cprint(f' └── Docker container', 'magenta')
-            self.cprint(f'     ├───────── ✸ {self.rees.pull_image_name}','light_blue')
-            self.cprint(f'     ├───────── ⎌ {self.rees.binder_image_tag}','light_blue')
-            self.cprint(f"     ├───────── ⏲ {self.rees.binder_commit_info['datetime']}: {self.rees.binder_commit_info['message']}".replace('\n', ''),'light_blue')
+
+            # Use the helper function to log and print messages
+            def log_and_print(message, color=None):
+                output_logs.append(message)
+                if color:
+                    self.cprint(message, color)
+                else:
+                    print(message)
+
+            # Collecting and printing output
+            log_and_print('␤[Status]', 'light_grey')
+            log_and_print(' ├─────── ⏺ running', 'green')
+            log_and_print(f' └─────── Container {self.container.short_id} {self.container.name}', 'green')
+            log_and_print(' ℹ Run the following commands in the terminal if you are debugging locally:', 'yellow')
+            log_and_print(f' port="{self.port}"', 'cyan')
+            log_and_print(f' export JUPYTER_BASE_URL="{self.jh_url}"', 'cyan')
+            log_and_print(f' export JUPYTER_TOKEN="{self.jh_token}"', 'cyan')
+            log_and_print('␤[Resources]', 'light_grey')
+            log_and_print(' ├── MyST repository', 'magenta')
+            log_and_print(f' │   ├───────── ✸ {self.rees.gh_user_repo_name}', 'light_blue')
+            log_and_print(f' │   ├───────── ⎌ {self.rees.gh_repo_commit_hash}', 'light_blue')
+            log_and_print(f" │   └───────── ⏲ {self.rees.repo_commit_info['datetime']}: {self.rees.repo_commit_info['message']}".replace('\n', ''), 'light_blue')
+            log_and_print(' └── Docker container', 'magenta')
+            log_and_print(f'     ├───────── ✸ {self.rees.pull_image_name}', 'light_blue')
+            log_and_print(f'     ├───────── ⎌ {self.rees.binder_image_tag}', 'light_blue')
+            log_and_print(f"     ├───────── ⏲ {self.rees.binder_commit_info['datetime']}: {self.rees.binder_commit_info['message']}".replace('\n', ''), 'light_blue')
             if self.rees.binder_image_name:
-                self.cprint(f'     └───────── ℹ Using NeuroLibre base image {self.rees.binder_image_name}','yellow')
+                log_and_print(f'     └───────── ℹ Using NeuroLibre base image {self.rees.binder_image_name}', 'yellow')
             else:    
-                self.cprint(f'     └───────── ℹ This image was built from REES-compliant {self.rees.gh_user_repo_name} repository at the commit above','yellow')
+                log_and_print(f'     └───────── ℹ This image was built from REES-compliant {self.rees.gh_user_repo_name} repository at the commit above', 'yellow')
         except Exception as e:
             logging.error(f'Could not spawn a JH: \n {e}')
+            output_logs.append(f'Error: {e}')  # Collecting error output
+
+        return output_logs  # Return collected logs and cprints
 
     def delete_stopped_containers(self):
         """
