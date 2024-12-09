@@ -116,7 +116,7 @@ class JupyterHubLocalSpawner(AbstractClass):
 
             # Use the helper function to log and print messages
             def log_and_print(message, color=None):
-                output_logs.append(message)
+                output_logs.append(f"\n {message}")
                 if color:
                     self.cprint(message, color)
                 else:
