@@ -78,14 +78,19 @@ class BuildSourceManager(AbstractClass):
     def get_project_name(self):
         """
         Get the project name from the data requirement file.
+        If the file doesn't exist, use the repository name.
         
         Returns:
-            str: Project name.
+            str: Project name or repository name.
         """
         data_config_dir = os.path.join(self.build_dir, 'binder', 'data_requirement.json')
-        with open(data_config_dir, 'r') as file:
-            data = json.load(file)
-        self.dataset_name = data['projectName']
+        if os.path.isfile(data_config_dir):
+            with open(data_config_dir, 'r') as file:
+                data = json.load(file)
+            self.dataset_name = data.get('projectName', self.repo_name)
+        else:
+            self.cprint(f'Data requirement file not found at {data_config_dir}, using repository name', "yellow")
+            self.dataset_name = None
     
     def repo2data_download(self,target_directory):
         data_req_path = os.path.join(self.build_dir, 'binder', 'data_requirement.json')
