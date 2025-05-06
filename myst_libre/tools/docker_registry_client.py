@@ -93,7 +93,8 @@ class DockerRegistryClient(Authenticator):
         else:
             pattern = f'{self.bh_image_prefix}{user_repo_formatted}.*'
 
-        print(pattern)
+        pattern = pattern.lower()
+        self.cprint(f"🔍 Search pattern: {pattern}","light_blue")
         for image in self.docker_images:
             if re.match(pattern, image):
                 self.found_image_name = image
