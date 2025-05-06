@@ -84,7 +84,7 @@ class REES(DockerRegistryClient,BuildSourceManager):
             self.logger.info(f"Logging into {self.registry_url}")
 
         try:
-            self.pull_image_name = f'{self.bh_private_project_name}/{self.found_image_name}'
+            self.pull_image_name = f'{self.bh_project_name}/{self.found_image_name}'
             self.logger.info(f'Pulling image {self.pull_image_name}:{self.binder_image_tag} from {self.registry_url}.')
             self.docker_image = self.docker_client.images.pull(self.pull_image_name, tag=self.binder_image_tag)
         except:
