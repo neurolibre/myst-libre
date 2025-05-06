@@ -65,7 +65,7 @@ Other optional parameters that can be passed to the REES constructor:
 - `binder_image_name_override`: Override the "found image name" whose container will be used to build the MyST article (optional, default: None)
 - `dotenv`: Path to a directory containing the .env file for authentication credentials to pull images from `registry_url` (optional, default: None)
 - `bh_image_prefix`: Binderhub names the images with a prefix, e.g., `<prefix>agahkarakuzu-2dmriscope-7a73fb`, typically set as `binder-`. This will be used in the regex pattern to find the "binderhub built image name" in the `registry_url`. See [reference docs](https://binderhub.readthedocs.io/en/latest/zero-to-binderhub/setup-binderhub.html) for more details. 
-- `bh_private_project_name`: See [this issue ](https://github.com/jupyterhub/binderhub/issues/800) (optional, default: [`registry_url` without `http://` or `https://`])
+- `bh_project_name`: See [this issue ](https://github.com/jupyterhub/binderhub/issues/800) (optional, default: [`registry_url` without `http://` or `https://`])
 
 
 Note that in this context what is meant by "prefix" is not the same as in the reference docs. (optional, default: `binder-`)

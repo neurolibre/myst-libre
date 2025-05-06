@@ -13,7 +13,6 @@ class REES(DockerRegistryClient,BuildSourceManager):
         self.gh_repo_commit_hash = rees_dict.get('gh_repo_commit_hash', "latest")
         self.binder_image_name_override = rees_dict.get('binder_image_name_override', None)
         self.binder_image_tag = rees_dict.get('binder_image_tag', "latest")
-        self.bh_private_project_name = rees_dict.get('bh_private_project_name', None)
         self.bh_image_prefix = rees_dict.get('bh_image_prefix', "binder-")
         self.bh_project_name = rees_dict.get('bh_project_name', None)
 
