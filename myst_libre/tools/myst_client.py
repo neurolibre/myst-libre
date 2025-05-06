@@ -158,9 +158,11 @@ class MystMD(AbstractClass):
         """
         os.chdir(self.build_dir)
         stdout_log, stderr_log = self.run_command(*args, env_vars=self.env_vars, user=user, group=group)
-        if stderr_log is not None:
-            stdout_log += stderr_log
-        return stdout_log
+
+        combined_log = stdout_log
+        if stderr_log:
+            combined_log += "\n" + stderr_log
+        return combined_log
     
     def convert(self, input_file, output_file, user=None, group=None):
         """
