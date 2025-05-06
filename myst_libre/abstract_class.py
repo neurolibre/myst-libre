@@ -36,12 +36,13 @@ class AbstractClass:
         self.logging_level = level
         self.logger = logging.basicConfig(level=self.logging_level, format='%(asctime)s - %(levelname)s - %(message)s')
     
-    def cprint(self, message, color):
+    def cprint(self, message, color,highlight=None):
         """
         Print a message in a specified color using termcolor.
         
         Args:
             message (str): The message to print.
             color (str): The color to use for printing the message.
+            highlight (str): The highlight to use for printing the message.
         """
-        print(colored(message, color))
+        print(colored(message, color, highlight))

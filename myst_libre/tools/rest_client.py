@@ -23,7 +23,7 @@ class RestClient(Authenticator):
         self.session = requests.Session()
         self.session.auth = HTTPBasicAuth(self._auth['username'], self._auth['password'])
 
-    def get(self, url):
+    def get(self, url,headers=None):
         """
         Perform a GET request.
         
@@ -33,7 +33,7 @@ class RestClient(Authenticator):
         Returns:
             Response: HTTP response object.
         """
-        response = self.session.get(url)
+        response = self.session.get(url,headers=headers)
         return response
 
     def post(self, url, data=None, json=None):

@@ -2,8 +2,7 @@ dotenv
 PyGithub
 GitPython
 docker
-hashlib
 termcolor
 mystmd
 requests
-repo2data==2.9.2
+repo2data==2.9.7

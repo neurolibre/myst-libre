@@ -54,15 +54,17 @@ class BuildSourceManager(AbstractClass):
         self.build_dir = os.path.join(self.host_build_source_parent_dir, self.username, self.repo_name, self.gh_repo_commit_hash)
         
         if os.path.exists(self.build_dir):
-            self.cprint(f'Source {self.build_dir} already exists.', "yellow")
+            self.cprint(f'Source {self.build_dir} already exists.', "black","on_yellow")
             self.repo_object = Repo(self.build_dir)
+            if os.path.exists(os.path.join(self.build_dir, '_build/html')):
+                self.cprint(f'⛔️ A build already exists at this commit, terminating...', "white","on_light_red")
+                raise Exception("A build already exists at this commit")
         else:
             os.makedirs(os.path.dirname(self.build_dir), exist_ok=True)
             self.cprint(f'Cloning into {self.build_dir}', "green")
             self.repo_object = Repo.clone_from(f'{self.provider}/{self.gh_user_repo_name}', self.build_dir)
         
         self.set_commit_info()
-        self.validate_commits()
 
     def git_checkout_commit(self):
         """
@@ -103,7 +105,7 @@ class BuildSourceManager(AbstractClass):
             repo2data.install()
 
     def set_commit_info(self):
-        if self.binder_image_name:
+        if self.binder_image_name_override:
             self.binder_commit_info['datetime'] = "20 November 2024"
             self.binder_commit_info['message'] =  "Base runtime from myst-libre"
         else:
@@ -111,12 +113,6 @@ class BuildSourceManager(AbstractClass):
             self.binder_commit_info['message'] = self.repo_object.commit(self.binder_image_tag).message
         self.repo_commit_info['datetime'] = self.repo_object.commit(self.gh_repo_commit_hash).committed_datetime
         self.repo_commit_info['message'] = self.repo_object.commit(self.gh_repo_commit_hash).message
-        self.validate_commits()
-
-    def validate_commits(self):
-        if not self.binder_image_name:
-            if self.repo_commit_info['datetime'] < self.binder_commit_info['datetime']:
-                raise ValueError("The repo commit datetime cannot be older than the binder commit datetime.")
 
     def create_latest_symlink(self):
         """

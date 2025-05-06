@@ -82,11 +82,6 @@ class JupyterHubLocalSpawner(AbstractClass):
             this_entrypoint = f"/bin/sh -c 'jupyter-book build --all --verbose --path-output {self.container_build_source_mount_dir} content 2>&1 | tee -a jupyter_book_build.log'"
         else:
             this_entrypoint = f'jupyter server --allow-root --ip 0.0.0.0 --log-level=DEBUG --IdentityProvider.token="{self.jh_token}" --ServerApp.port="{self.port}"'
-
-        if not self.rees.search_img_by_repo_name():
-            raise Exception(f"[ERROR] A docker image has not been found for {self.rees.gh_user_repo_name} at {self.rees.binder_image_tag}.")
-        if self.rees.binder_image_tag not in self.rees.found_image_tags:
-            raise Exception(f"[ERROR] A docker image exists for {self.rees.gh_user_repo_name}, yet the tag {self.rees.binder_image_tag} is missing.")
         
         # self.rees.found_image_name is assigned if above not fails
 
@@ -139,8 +134,8 @@ class JupyterHubLocalSpawner(AbstractClass):
             log_and_print(f'     ├───────── ✸ {self.rees.pull_image_name}', 'light_blue')
             log_and_print(f'     ├───────── ⎌ {self.rees.binder_image_tag}', 'light_blue')
             log_and_print(f"     ├───────── ⏲ {self.rees.binder_commit_info['datetime']}: {self.rees.binder_commit_info['message']}".replace('\n', ''), 'light_blue')
-            if self.rees.binder_image_name:
-                log_and_print(f'     └───────── ℹ Using NeuroLibre base image {self.rees.binder_image_name}', 'yellow')
+            if self.rees.binder_image_name_override:
+                log_and_print(f'     └───────── ℹ Using NeuroLibre base image {self.rees.binder_image_name_override}', 'yellow')
             else:    
                 log_and_print(f'     └───────── ℹ This image was built from REES-compliant {self.rees.gh_user_repo_name} repository at the commit above', 'yellow')
         except Exception as e:

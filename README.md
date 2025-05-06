@@ -1,4 +1,3 @@
-
 # MyST Libre
 
 ![PyPI - Version](https://img.shields.io/pypi/v/myst-libre?style=flat&logo=python&logoColor=white&logoSize=8&labelColor=rgb(255%2C0%2C0)&color=white)
@@ -45,21 +44,44 @@ DOCKER_PRIVATE_REGISTRY_PASSWORD=your_password
 
 **Import libraries and define REES resources**
 
+Minimal example to create a rees object:
+
 ```python
 from myst_libre.tools import JupyterHubLocalSpawner, MystMD
 from myst_libre.rees import REES
 from myst_libre.builders import MystBuilder
 
-rees_resources = REES(dict(
+rees = REES(dict(
                   registry_url="https://your-registry.io",
-                  gh_user_repo_name = "owner/repository",
-                  gh_repo_commit_hash = "full_SHA_commit_A",
-                  binder_image_tag = "full_SHA_commit_A_or_B",
-                  dotenv = '/path/to/dotenv'))
+                  gh_user_repo_name = "owner/repository"
+                  ))
 ```
 
-> [!NOTE]
-> Currently, the assumption is that the Docker image was built by binderhub from a REES-compliant repository that also includes the MyST content. Therefore, `binder_image_tag` and `gh_repo_commit_hash` are simply two different commits in the same (`gh_repo_user_name`) repository. However, `binder_image_tag` is not allowed to be ahead of `gh_repo_commit_hash`.
+Other optional parameters that can be passed to the REES constructor:
+
+
+- `gh_repo_commit_hash`: Full SHA commit hash of the `gh_user_repo_name` repository (optional, default: latest commit)
+- `binder_image_tag`: Full SHA commit hash at which a binder tag is available for the "found image name" (optional, default: latest)
+- `binder_image_name_override`: Override the "found image name" whose container will be used to build the MyST article (optional, default: None)
+- `dotenv`: Path to a directory containing the .env file for authentication credentials to pull images from `registry_url` (optional, default: None)
+- `bh_image_prefix`: Binderhub names the images with a prefix, e.g., `<prefix>agahkarakuzu-2dmriscope-7a73fb`, typically set as `binder-`. This will be used in the regex pattern to find the "binderhub built image name" in the `registry_url`. See [reference docs](https://binderhub.readthedocs.io/en/latest/zero-to-binderhub/setup-binderhub.html) for more details. 
+- `bh_private_project_name`: See [this issue ](https://github.com/jupyterhub/binderhub/issues/800) (optional, default: [`registry_url` without `http://` or `https://`])
+
+
+Note that in this context what is meant by "prefix" is not the same as in the reference docs. (optional, default: `binder-`)
+
+**Image Selection Order**
+
+1. If the `myst.yml` file in the `gh_user_repo_name` repository contains `project/thebe/binder/repo`, this image is prioritized.
+2. If `project/thebe/binder/repo` is not specified, the `gh_user_repo_name` is used as the image name.
+
+Note that if (2) is the case, your build command probably should not be `myst build`, but you can still use other builders, e.g., `jupyter-book build`.
+
+If you specify `binder_image_name_override`, it will be used as the repository name to locate the image.
+
+This allows you to build the MyST article using a runtime from a different repository than the one specified in `gh_user_repo_name`, as defined in `myst.yml` or overridden by `binder_image_name_override`.
+
+The `binder_image_tag` set to `latest` refers to the most recent successful build of an image that meets the specified conditions. The repository content might be more recent than the `binder_image_tag` (e.g., `gh_repo_commit_hash`), but the same binder image can be reused.
 
 **Fetch resources and spawn JupyterHub in the respective container**
 

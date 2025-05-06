@@ -25,11 +25,12 @@ dependencies = [
     "PyGithub",
     "termcolor",
     "mystmd",
-    "repo2data"
+    "repo2data",
+    "pyyaml"
 ]
 
 [project.urls]
-Homepage = "https://github.com/agahkarakuzu/myst_libre"
+Homepage = "https://github.com/neurolibre/myst_libre"
 
 [tool.setuptools_scm]
 version_scheme = "post-release"
