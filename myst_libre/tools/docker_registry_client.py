@@ -73,7 +73,13 @@ class DockerRegistryClient(Authenticator):
         else:
             # If not overridden, the (thebe/binder)repo in myst.yml takes precedence
             if self.get_myst_yml_as_dict():
-                src_name = self.myst_yml_dict['project']['thebe']['binder']['repo']
+                src_name = None
+                if 'thebe' in self.myst_yml_dict.get('project', {}) and 'binder' in self.myst_yml_dict['project']['thebe']:
+                    src_name = self.myst_yml_dict['project']['thebe']['binder'].get('repo')
+                elif 'github' in self.myst_yml_dict.get('project', {}):
+                    repo_url = self.myst_yml_dict['project']['github'].get('repo', '').rstrip('/')
+                    src_name = '/'.join(repo_url.split('/')[-2:]) if len(repo_url.split('/')) >= 2 else repo_url
+
                 if src_name:
                     self.cprint(f"🥳 Using project::thebe::binder::repo from myst config to look for 🐳 in {self.registry_url}: {src_name}","light_blue")
                 else:
