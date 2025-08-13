@@ -23,8 +23,15 @@ class Authenticator(AbstractClass):
             self._auth['username'] = username
             self._auth['password'] = password
 
-        try:
-            del os.environ['DOCKER_PRIVATE_REGISTRY_USERNAME']
-            del os.environ['DOCKER_PRIVATE_REGISTRY_PASSWORD']
-        except:
-            pass 
+        # Clean up environment variables for security
+        env_vars_to_clean = ['DOCKER_PRIVATE_REGISTRY_USERNAME', 'DOCKER_PRIVATE_REGISTRY_PASSWORD']
+        for var in env_vars_to_clean:
+            try:
+                del os.environ[var]
+                self.logger.debug(f"Cleaned up environment variable: {var}")
+            except KeyError:
+                # Variable wasn't set, which is fine
+                self.logger.debug(f"Environment variable {var} was not set")
+            except Exception as e:
+                # Log but don't fail - this is cleanup
+                self.logger.warning(f"Could not clean up environment variable {var}: {e}") 

@@ -15,6 +15,8 @@ class JupyterHubLocalSpawner(AbstractClass):
     """
     Spawner for managing JupyterHub instances locally.
     
+    This class implements context manager protocol for proper resource cleanup.
+    
     Args:
         registry_url (str): URL of the Docker registry (https://my-registry.example.com).
         gh_user_repo_name (str): GitHub user/repository name.
@@ -39,6 +41,7 @@ class JupyterHubLocalSpawner(AbstractClass):
         self.container = None
         self.port = None
         self.jh_token = None
+        self._cleanup_needed = False
 
     def find_open_port(self):
         """
@@ -67,6 +70,32 @@ class JupyterHubLocalSpawner(AbstractClass):
         """
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
             return s.connect_ex(('127.0.0.1', port)) == 0
+
+    def __enter__(self):
+        """Context manager entry point."""
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        """Context manager exit point - ensures cleanup."""
+        self.cleanup()
+        return False  # Don't suppress exceptions
+
+    def cleanup(self):
+        """
+        Clean up all resources (container, etc.).
+        """
+        if self.container:
+            try:
+                self.logger.info(f"Cleaning up container {self.container.short_id}")
+                self.container.stop(timeout=10)
+                self.container.remove(force=True)
+                self.logger.info("Container cleaned up successfully")
+            except Exception as e:
+                self.logger.error(f"Error during container cleanup: {e}")
+            finally:
+                self.container = None
+        
+        self._cleanup_needed = False
 
     def spawn_jupyter_hub(self, jb_build_command=None):
         """
@@ -107,6 +136,7 @@ class JupyterHubLocalSpawner(AbstractClass):
                 entrypoint=this_entrypoint,
                 volumes=mnt_vol,
                 detach=True)
+            self._cleanup_needed = True
             logging.info(f'Jupyter hub is {self.container.status}')
 
             # Use the helper function to log and print messages
@@ -140,9 +170,11 @@ class JupyterHubLocalSpawner(AbstractClass):
                 log_and_print(f'     └───────── ℹ This image was built from REES-compliant {self.rees.gh_user_repo_name} repository at the commit above', 'yellow')
         except Exception as e:
             logging.error(f'Could not spawn a JH: \n {e}')
-            output_logs.append(f'Error: {e}')  # Collecting error output
+            output_logs.append(f'Error: {e}')
+            self.cleanup()
+            raise
 
-        return output_logs  # Return collected logs and cprints
+        return output_logs
 
     def delete_stopped_containers(self):
         """
@@ -162,9 +194,41 @@ class JupyterHubLocalSpawner(AbstractClass):
             self.rees.docker_client.images.remove(image=self.docker_image.id)
 
     def stop_container(self):
+        self.logger.warning("Attempting to stop and remove the running container.")
+        self.cleanup()
+
+    def is_running(self):
         """
-        Stop and remove the running container.
+        Check if the container is currently running.
+        
+        Returns:
+            bool: True if container exists and is running, False otherwise.
         """
-        if self.container:
-            self.container.stop()
-            self.container.remove()
+        if not self.container:
+            return False
+        
+        try:
+            self.container.reload()
+            return self.container.status == 'running'
+        except Exception as e:
+            self.logger.error(f"Error checking container status: {e}")
+            return False
+
+    def get_container_logs(self, tail=100):
+        """
+        Get logs from the running container.
+        
+        Args:
+            tail (int): Number of lines to tail from the logs.
+            
+        Returns:
+            str: Container logs or empty string if container not available.
+        """
+        if not self.container:
+            return ""
+        
+        try:
+            return self.container.logs(tail=tail).decode('utf-8')
+        except Exception as e:
+            self.logger.error(f"Error getting container logs: {e}")
+            return f"Error retrieving logs: {e}"

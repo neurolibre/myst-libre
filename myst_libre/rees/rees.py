@@ -86,6 +86,11 @@ class REES(DockerRegistryClient,BuildSourceManager):
             self.pull_image_name = f'{self.bh_project_name}/{self.found_image_name}'
             self.logger.info(f'Pulling image {self.pull_image_name}:{self.binder_image_tag} from {self.registry_url}.')
             self.docker_image = self.docker_client.images.pull(self.pull_image_name, tag=self.binder_image_tag)
-        except:
-            self.logger.info(f'Pulling image {self.found_image_name}:{self.binder_image_tag} from {self.registry_url}.')
-            self.docker_image = self.docker_client.images.pull(self.found_image_name, tag=self.binder_image_tag)
+        except (docker.errors.ImageNotFound, docker.errors.APIError) as e:
+            self.logger.warning(f'Failed to pull with project prefix: {e}. Trying without prefix.')
+            try:
+                self.pull_image_name = self.found_image_name
+                self.logger.info(f'Pulling image {self.found_image_name}:{self.binder_image_tag} from {self.registry_url}.')
+                self.docker_image = self.docker_client.images.pull(self.found_image_name, tag=self.binder_image_tag)
+            except docker.errors.DockerException as fallback_error:
+                raise RuntimeError(f"Failed to pull Docker image '{self.found_image_name}:{self.binder_image_tag}' from {self.registry_url}. Original error: {e}. Fallback error: {fallback_error}")
