@@ -31,6 +31,7 @@ class BuildSourceManager(AbstractClass):
         now = datetime.now()
         self.created_at = now.strftime("%Y-%m-%dT%H:%M:%S")
         self.dataset_name = ""
+        self.preserve_cache = True  # Default: preserve _build cache across commits
 
     def create_build_dir_host(self):
         """
@@ -59,6 +60,9 @@ class BuildSourceManager(AbstractClass):
         if os.path.exists(self.build_dir):
             self.cprint(f'Source {self.build_dir} already exists, will reuse and update.', "black","on_yellow")
             self.repo_object = Repo(self.build_dir)
+            # Fetch latest commits so we have the commit we're trying to build
+            self.cprint(f'Fetching latest commits from origin', "cyan")
+            self.repo_object.remotes.origin.fetch()
         else:
             os.makedirs(os.path.dirname(self.build_dir), exist_ok=True)
             self.cprint(f'Cloning into {self.build_dir}', "green")
@@ -70,18 +74,39 @@ class BuildSourceManager(AbstractClass):
         """
         Checkout the specified commit in the repository.
         Fetches latest changes, cleans the working directory, and checks out the commit.
+        The _build folder is preserved via git exclude if self.preserve_cache is True.
 
         Returns:
             bool: True if checked out successfully.
         """
         try:
+            if self.preserve_cache:
+                # Add _build to git exclude to preserve it during checkout
+                git_exclude_path = os.path.join(self.build_dir, '.git', 'info', 'exclude')
+                try:
+                    with open(git_exclude_path, 'r') as f:
+                        exclude_content = f.read()
+                    if '_build' not in exclude_content:
+                        with open(git_exclude_path, 'a') as f:
+                            f.write('\n_build/\n')
+                        self.cprint(f'Added _build to git exclude', "cyan")
+                except FileNotFoundError:
+                    os.makedirs(os.path.dirname(git_exclude_path), exist_ok=True)
+                    with open(git_exclude_path, 'w') as f:
+                        f.write('_build/\n')
+                    self.cprint(f'Created git exclude with _build', "cyan")
+
             # Fetch latest changes from remote
             self.cprint(f'Fetching latest changes from origin', "cyan")
             self.repo_object.remotes.origin.fetch()
 
-            # Clean the working directory (remove untracked files and directories)
-            self.cprint(f'Cleaning working directory', "cyan")
-            self.repo_object.git.clean('-fdx')
+            # Clean the working directory
+            if self.preserve_cache:
+                self.cprint(f'Cleaning working directory (preserving _build)', "cyan")
+                self.repo_object.git.clean('-fdx', '-e', '_build')
+            else:
+                self.cprint(f'Cleaning working directory (removing cache)', "yellow")
+                self.repo_object.git.clean('-fdx')
 
             # Reset any local changes
             self.repo_object.git.reset('--hard')
@@ -185,3 +210,27 @@ class BuildSourceManager(AbstractClass):
             self.logger.error(f'Failed to save successful build: {e}')
             self.cprint(f'✗ Failed to preserve build: {e}', "white", "on_red")
             return False
+
+    def clear_build_cache(self):
+        """
+        Manually clear the _build cache in the latest directory.
+        Useful when you want to force a clean build.
+
+        Returns:
+            bool: True if cache cleared successfully, False otherwise.
+        """
+        build_cache_path = os.path.join(self.build_dir, '_build')
+        if os.path.exists(build_cache_path):
+            try:
+                self.cprint(f'Clearing build cache at {build_cache_path}', "yellow")
+                shutil.rmtree(build_cache_path)
+                self.logger.info('Build cache cleared successfully')
+                self.cprint('✓ Build cache cleared', "green")
+                return True
+            except Exception as e:
+                self.logger.error(f'Failed to clear build cache: {e}')
+                self.cprint(f'✗ Failed to clear cache: {e}', "red")
+                return False
+        else:
+            self.cprint('No build cache to clear', "cyan")
+            return True
