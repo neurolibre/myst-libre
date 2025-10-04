@@ -5,4 +5,5 @@ from .docker_registry_client import DockerRegistryClient
 from .build_source_manager import BuildSourceManager
 from .jupyter_hub_local_spawner import JupyterHubLocalSpawner
 from .myst_client import MystMD
+from .curvenote_client import Curvenote
 from .authenticator import Authenticator

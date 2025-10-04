@@ -33,12 +33,15 @@ pip install myst-libre
 
 **Set up environment variables:**
 
-If you are using a private image registry, create a `.env` file in the project root and add the following:
+If you are using a private image registry and/or Curvenote CLI features, create a `.env` file in the project root and add the following:
 
 ```env
 DOCKER_PRIVATE_REGISTRY_USERNAME=your_username
 DOCKER_PRIVATE_REGISTRY_PASSWORD=your_password
+CURVENOTE_TOKEN=your_curvenote_api_token
 ```
+
+The `CURVENOTE_TOKEN` is required for operations like `curvenote submit`, `curvenote deploy`, `curvenote pull`, etc. You can generate an API token from your [Curvenote profile settings](https://curvenote.com/profile?settings=true&tab=profile-api&subtab=general).
 
 ## Quick Start
 

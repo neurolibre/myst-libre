@@ -13,6 +13,7 @@ class Authenticator(AbstractClass):
         
         load_dotenv(os.path.join(self.dotenvloc,'.env'))
 
+        # Docker registry authentication
         username = os.getenv('DOCKER_PRIVATE_REGISTRY_USERNAME')
         password = os.getenv('DOCKER_PRIVATE_REGISTRY_PASSWORD')
 
@@ -23,8 +24,15 @@ class Authenticator(AbstractClass):
             self._auth['username'] = username
             self._auth['password'] = password
 
+        # Curvenote API token authentication
+        curvenote_token = os.getenv('CURVENOTE_TOKEN')
+        if curvenote_token:
+            self._auth['curvenote_token'] = curvenote_token
+        else:
+            self._auth['curvenote_token'] = None
+
         # Clean up environment variables for security
-        env_vars_to_clean = ['DOCKER_PRIVATE_REGISTRY_USERNAME', 'DOCKER_PRIVATE_REGISTRY_PASSWORD']
+        env_vars_to_clean = ['DOCKER_PRIVATE_REGISTRY_USERNAME', 'DOCKER_PRIVATE_REGISTRY_PASSWORD', 'CURVENOTE_TOKEN']
         for var in env_vars_to_clean:
             try:
                 del os.environ[var]
