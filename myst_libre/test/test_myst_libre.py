@@ -44,7 +44,7 @@ class TestDockerRegistryClient(unittest.TestCase):
 class TestBuildSourceManager(unittest.TestCase):
 
     def setUp(self):
-        self.gh_user_repo_name = 'user/repo'
+        self.gh_user_repo_name = 'testuser/testrepo'
         self.gh_repo_commit_hash = 'commit_hash'
         self.manager = BuildSourceManager(self.gh_user_repo_name, self.gh_repo_commit_hash)
 
@@ -52,7 +52,7 @@ class TestBuildSourceManager(unittest.TestCase):
     @patch('os.path.exists', return_value=False)
     def test_create_build_dir_host(self, mock_exists, mock_makedirs):
         result = self.manager.create_build_dir_host()
-        mock_makedirs.assert_called_once_with(self.manager.build_dir)
+        mock_makedirs.assert_called_once_with(self.manager.build_dir, exist_ok=True)
         self.assertTrue(result)
 
     @patch('os.path.exists', return_value=True)
@@ -60,12 +60,69 @@ class TestBuildSourceManager(unittest.TestCase):
         result = self.manager.create_build_dir_host()
         self.assertFalse(result)
 
-    @patch('myst_libre.Repo.clone_from')
-    @patch('myst_libre.BuildSourceManager.create_build_dir_host', return_value=True)
-    def test_git_clone_repo(self, mock_create_build_dir_host, mock_clone_from):
-        result = self.manager.git_clone_repo()
-        mock_clone_from.assert_called_once_with(f'https://github.com/{self.gh_user_repo_name}', self.manager.build_dir)
+    @patch('myst_libre.tools.build_source_manager.Repo.clone_from')
+    @patch('myst_libre.tools.build_source_manager.Repo')
+    @patch('os.path.exists')
+    @patch('os.makedirs')
+    def test_git_clone_repo_new(self, mock_makedirs, mock_exists, mock_repo, mock_clone_from):
+        # Test cloning into 'latest' directory when it doesn't exist
+        mock_exists.return_value = False
+        mock_repo_instance = MagicMock()
+        mock_clone_from.return_value = mock_repo_instance
+
+        self.manager.git_clone_repo('/tmp/test')
+
+        # Verify build_dir uses 'latest' instead of commit hash
+        expected_build_dir = '/tmp/test/testuser/testrepo/latest'
+        self.assertEqual(self.manager.build_dir, expected_build_dir)
+        mock_clone_from.assert_called_once_with('https://github.com/testuser/testrepo', expected_build_dir)
+
+    @patch('myst_libre.tools.build_source_manager.Repo')
+    @patch('os.path.exists')
+    def test_git_clone_repo_existing(self, mock_exists, mock_repo):
+        # Test reusing existing 'latest' directory
+        mock_exists.return_value = True
+        mock_repo_instance = MagicMock()
+        mock_repo.return_value = mock_repo_instance
+
+        self.manager.git_clone_repo('/tmp/test')
+
+        # Verify build_dir uses 'latest'
+        expected_build_dir = '/tmp/test/testuser/testrepo/latest'
+        self.assertEqual(self.manager.build_dir, expected_build_dir)
+        mock_repo.assert_called_once_with(expected_build_dir)
+
+    @patch('builtins.open', new_callable=unittest.mock.mock_open, read_data='abc123def')
+    @patch('os.path.exists', return_value=True)
+    def test_read_latest_successful_hash(self, mock_exists, mock_open):
+        self.manager.host_build_source_parent_dir = '/tmp/test'
+        result = self.manager.read_latest_successful_hash()
+        self.assertEqual(result, 'abc123def')
+
+    @patch('builtins.open', new_callable=unittest.mock.mock_open)
+    @patch('os.path.exists', return_value=False)
+    def test_read_latest_successful_hash_no_file(self, mock_exists, mock_open):
+        self.manager.host_build_source_parent_dir = '/tmp/test'
+        result = self.manager.read_latest_successful_hash()
+        self.assertIsNone(result)
+
+    @patch('shutil.copytree')
+    @patch('shutil.rmtree')
+    @patch('builtins.open', new_callable=unittest.mock.mock_open)
+    @patch('os.path.exists')
+    def test_save_successful_build(self, mock_exists, mock_open, mock_rmtree, mock_copytree):
+        self.manager.host_build_source_parent_dir = '/tmp/test'
+        self.manager.build_dir = '/tmp/test/testuser/testrepo/latest'
+        mock_exists.return_value = False
+
+        result = self.manager.save_successful_build()
+
         self.assertTrue(result)
+        expected_commit_dir = '/tmp/test/testuser/testrepo/commit_hash'
+        mock_copytree.assert_called_once_with(self.manager.build_dir, expected_commit_dir, symlinks=False)
+        # Verify latest.txt was written with commit hash
+        mock_open.assert_called_once_with('/tmp/test/testuser/testrepo/latest.txt', 'w')
+        mock_open().write.assert_called_once_with('commit_hash')
 
 class TestJupyterHubLocalSpawner(unittest.TestCase):
 

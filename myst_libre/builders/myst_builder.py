@@ -32,4 +32,14 @@ class MystBuilder(AbstractClass):
         else:
             self.cprint(f'Starting MyST build no exec.','yellow')
         logs = self.myst_client.build('build',*args,user=user,group=group)
+
+        # Check if build was successful by looking for error indicators in logs
+        # A successful build should not contain "Error" in stderr and should complete
+        build_failed = logs and ('Error' in logs or 'error:' in logs.lower() or 'failed' in logs.lower())
+
+        if not build_failed and self.hub is not None:
+            # Save the successful build
+            self.cprint('Build completed successfully, preserving...', 'green')
+            self.hub.rees.save_successful_build()
+
         return logs

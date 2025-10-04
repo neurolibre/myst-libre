@@ -34,6 +34,15 @@ class CurvenoteBuilder(AbstractClass):
         else:
             self.cprint(f'Starting Curvenote build no exec.','yellow')
         logs = self.curvenote_client.build(*args, user=user, group=group)
+
+        # Check if build was successful by looking for error indicators in logs
+        build_failed = logs and ('Error' in logs or 'error:' in logs.lower() or 'failed' in logs.lower())
+
+        if not build_failed and self.hub is not None:
+            # Save the successful build
+            self.cprint('Build completed successfully, preserving...', 'green')
+            self.hub.rees.save_successful_build()
+
         return logs
     
     def start(self, *args, user=None, group=None):

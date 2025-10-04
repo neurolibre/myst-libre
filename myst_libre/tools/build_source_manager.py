@@ -6,6 +6,7 @@ This module contains the BuildSourceManager class for handling source code repos
 
 import os
 import json
+import shutil
 os.environ["GIT_PYTHON_REFRESH"] = "quiet"
 from git import Repo
 from datetime import datetime
@@ -45,37 +46,55 @@ class BuildSourceManager(AbstractClass):
 
     def git_clone_repo(self,clone_parent_directory):
         """
-        Clone the GitHub repository.
-        
+        Clone the GitHub repository into the 'latest' directory.
+        Always works in the 'latest' folder to avoid cache snowballing.
+
         Returns:
             bool: True if cloned successfully, else False.
         """
         self.host_build_source_parent_dir = clone_parent_directory
-        self.build_dir = os.path.join(self.host_build_source_parent_dir, self.username, self.repo_name, self.gh_repo_commit_hash)
-        
+        # Always use 'latest' directory for builds
+        self.build_dir = os.path.join(self.host_build_source_parent_dir, self.username, self.repo_name, 'latest')
+
         if os.path.exists(self.build_dir):
-            self.cprint(f'Source {self.build_dir} already exists.', "black","on_yellow")
+            self.cprint(f'Source {self.build_dir} already exists, will reuse and update.', "black","on_yellow")
             self.repo_object = Repo(self.build_dir)
-            if os.path.exists(os.path.join(self.build_dir, '_build/html')):
-                self.cprint(f'⛔️ A build already exists at this commit, terminating...', "white","on_light_red")
-                raise Exception("A build already exists at this commit")
         else:
             os.makedirs(os.path.dirname(self.build_dir), exist_ok=True)
             self.cprint(f'Cloning into {self.build_dir}', "green")
             self.repo_object = Repo.clone_from(f'{self.provider}/{self.gh_user_repo_name}', self.build_dir)
-        
+
         self.set_commit_info()
 
     def git_checkout_commit(self):
         """
         Checkout the specified commit in the repository.
-        
+        Fetches latest changes, cleans the working directory, and checks out the commit.
+
         Returns:
             bool: True if checked out successfully.
         """
-        self.cprint(f'Checking out {self.gh_repo_commit_hash}', "green")
-        self.repo_object.git.checkout(self.gh_repo_commit_hash)
-        return True
+        try:
+            # Fetch latest changes from remote
+            self.cprint(f'Fetching latest changes from origin', "cyan")
+            self.repo_object.remotes.origin.fetch()
+
+            # Clean the working directory (remove untracked files and directories)
+            self.cprint(f'Cleaning working directory', "cyan")
+            self.repo_object.git.clean('-fdx')
+
+            # Reset any local changes
+            self.repo_object.git.reset('--hard')
+
+            # Checkout the specified commit
+            self.cprint(f'Checking out {self.gh_repo_commit_hash}', "green")
+            self.repo_object.git.checkout(self.gh_repo_commit_hash)
+
+            return True
+        except Exception as e:
+            self.logger.error(f'Failed to checkout commit: {e}')
+            self.cprint(f'✗ Failed to checkout {self.gh_repo_commit_hash}: {e}', "white", "on_red")
+            raise
 
     def get_project_name(self):
         """
@@ -114,21 +133,55 @@ class BuildSourceManager(AbstractClass):
         self.repo_commit_info['datetime'] = self.repo_object.commit(self.gh_repo_commit_hash).committed_datetime
         self.repo_commit_info['message'] = self.repo_object.commit(self.gh_repo_commit_hash).message
 
-    def create_latest_symlink(self):
+    def read_latest_successful_hash(self):
         """
-        Create a symlink to the latest build directory.
+        Read the latest successful build commit hash from latest.txt.
+
+        Returns:
+            str: Commit hash of last successful build, or None if file doesn't exist.
         """
-        self.latest_dir = os.path.join(self.host_build_source_parent_dir, self.username, self.repo_name, 'latest')
-        self.logger.info(f'Creating symlink {self.gh_repo_commit_hash} --> latest')
-        if not os.path.exists(self.latest_dir):
-            os.makedirs(self.latest_dir)
-        else:
-            for item in os.listdir(self.build_dir):
-                os.unlink(item)
-        for item in os.listdir(self.build_dir):
-            source_path = os.path.join(self.build_dir, item)
-            target_path = os.path.join(self.latest_dir, item)
-            if os.path.isdir(source_path):
-                os.symlink(source_path, target_path, target_is_directory=True)
-            else:
-                os.symlink(source_path, target_path)
+        latest_txt_path = os.path.join(self.host_build_source_parent_dir, self.username, self.repo_name, 'latest.txt')
+        if os.path.exists(latest_txt_path):
+            try:
+                with open(latest_txt_path, 'r') as f:
+                    commit_hash = f.read().strip()
+                    self.logger.info(f'Last successful build: {commit_hash}')
+                    return commit_hash
+            except Exception as e:
+                self.logger.warning(f'Error reading latest.txt: {e}')
+                return None
+        return None
+
+    def save_successful_build(self):
+        """
+        Save the current successful build by copying 'latest' directory to a commit-specific folder
+        and updating latest.txt with the commit hash.
+
+        Returns:
+            bool: True if saved successfully, False otherwise.
+        """
+        try:
+            # Define the target directory for this commit
+            commit_dir = os.path.join(self.host_build_source_parent_dir, self.username, self.repo_name, self.gh_repo_commit_hash)
+
+            # If commit directory already exists, remove it first
+            if os.path.exists(commit_dir):
+                self.cprint(f'Removing existing build at {self.gh_repo_commit_hash}', "yellow")
+                shutil.rmtree(commit_dir)
+
+            # Copy the latest directory to the commit-specific directory
+            self.cprint(f'Preserving successful build to {self.gh_repo_commit_hash}', "green")
+            shutil.copytree(self.build_dir, commit_dir, symlinks=False)
+
+            # Update latest.txt with the successful commit hash
+            latest_txt_path = os.path.join(self.host_build_source_parent_dir, self.username, self.repo_name, 'latest.txt')
+            with open(latest_txt_path, 'w') as f:
+                f.write(self.gh_repo_commit_hash)
+
+            self.logger.info(f'Successfully saved build for commit {self.gh_repo_commit_hash}')
+            self.cprint(f'✓ Build preserved at {commit_dir}', "white", "on_green")
+            return True
+        except Exception as e:
+            self.logger.error(f'Failed to save successful build: {e}')
+            self.cprint(f'✗ Failed to preserve build: {e}', "white", "on_red")
+            return False
