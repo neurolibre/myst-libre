@@ -129,12 +129,19 @@ class JupyterHubLocalSpawner(AbstractClass):
         self.rees.pull_image()
         self.jh_url = f"http://localhost:{self.port}"
         try:
+            # Run the container as the current host user (UID:GID) so files
+            # created inside bind-mounted volumes are owned by the host user.
+            # This avoids leaving root-owned files on the host that the user
+            # cannot delete after the container stops.
+            run_user = f"{os.getuid()}:{os.getgid()}"
+            logging.debug(f"Running container as user {run_user}")
             self.container = self.rees.docker_client.containers.run(
                 self.rees.docker_image,
                 ports={f'{self.port}/tcp': self.port},
                 environment={"JUPYTER_TOKEN": f'{self.jh_token}', "port": f'{self.port}', "JUPYTER_BASE_URL": f'{self.jh_url}'},
                 entrypoint=this_entrypoint,
                 volumes=mnt_vol,
+                user=run_user,
                 detach=True)
             self._cleanup_needed = True
             logging.info(f'Jupyter hub is {self.container.status}')
