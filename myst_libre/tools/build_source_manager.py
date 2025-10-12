@@ -80,33 +80,49 @@ class BuildSourceManager(AbstractClass):
             bool: True if checked out successfully.
         """
         try:
+            # Add _build and data to git exclude to preserve them during checkout
+            # This prevents git clean from trying to remove them (important for data
+            # as it may contain root-owned files from previous container runs)
+            git_exclude_path = os.path.join(self.build_dir, '.git', 'info', 'exclude')
+            patterns_to_exclude = []
+
             if self.preserve_cache:
-                # Add _build to git exclude to preserve it during checkout
-                git_exclude_path = os.path.join(self.build_dir, '.git', 'info', 'exclude')
-                try:
-                    with open(git_exclude_path, 'r') as f:
-                        exclude_content = f.read()
-                    if '_build' not in exclude_content:
-                        with open(git_exclude_path, 'a') as f:
-                            f.write('\n_build/\n')
-                        self.cprint(f'Added _build to git exclude', "cyan")
-                except FileNotFoundError:
-                    os.makedirs(os.path.dirname(git_exclude_path), exist_ok=True)
-                    with open(git_exclude_path, 'w') as f:
-                        f.write('_build/\n')
-                    self.cprint(f'Created git exclude with _build', "cyan")
+                patterns_to_exclude.append('_build/')
+
+            # Always exclude data directory to avoid permission issues
+            patterns_to_exclude.append('data/')
+
+            try:
+                with open(git_exclude_path, 'r') as f:
+                    exclude_content = f.read()
+            except FileNotFoundError:
+                os.makedirs(os.path.dirname(git_exclude_path), exist_ok=True)
+                exclude_content = ''
+
+            # Add any missing patterns
+            patterns_added = []
+            for pattern in patterns_to_exclude:
+                if pattern not in exclude_content:
+                    patterns_added.append(pattern)
+
+            if patterns_added:
+                with open(git_exclude_path, 'a') as f:
+                    if exclude_content and not exclude_content.endswith('\n'):
+                        f.write('\n')
+                    f.write('\n'.join(patterns_added) + '\n')
+                self.cprint(f'Added {", ".join(patterns_added)} to git exclude', "cyan")
 
             # Fetch latest changes from remote
             self.cprint(f'Fetching latest changes from origin', "cyan")
             self.repo_object.remotes.origin.fetch()
 
             # Clean the working directory
+            exclude_args = ['-e', pattern.rstrip('/') for pattern in patterns_to_exclude]
             if self.preserve_cache:
-                self.cprint(f'Cleaning working directory (preserving _build)', "cyan")
-                self.repo_object.git.clean('-fdx', '-e', '_build')
+                self.cprint(f'Cleaning working directory (preserving _build and data)', "cyan")
             else:
-                self.cprint(f'Cleaning working directory (removing cache)', "yellow")
-                self.repo_object.git.clean('-fdx')
+                self.cprint(f'Cleaning working directory (preserving data)', "cyan")
+            self.repo_object.git.clean('-fdx', *exclude_args)
 
             # Reset any local changes
             self.repo_object.git.reset('--hard')

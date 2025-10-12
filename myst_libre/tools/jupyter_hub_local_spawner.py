@@ -118,17 +118,18 @@ class JupyterHubLocalSpawner(AbstractClass):
         self.rees.git_checkout_commit()
         if not self.rees.dataset_name:
             self.rees.get_project_name()
-        
+
+        # Pre-create the data directory in the build directory AFTER checkout to prevent Docker
+        # from creating it as root when mounting volumes. This must be done after checkout
+        # to avoid interfering with git operations.
+        # Since self.rees.build_dir maps to /home/jovyan and data will be mounted
+        # at /home/jovyan/data, we need to create 'data' subdirectory here
+        data_dir_in_build = os.path.join(self.rees.build_dir, 'data')
+        os.makedirs(data_dir_in_build, exist_ok=True)
+        logging.debug(f"Pre-created data directory: {data_dir_in_build}")
+
         if self.rees.dataset_name:
             self.rees.repo2data_download(self.host_data_parent_dir)
-
-            # Pre-create the data directory in the build directory to prevent Docker
-            # from creating it as root when mounting volumes
-            # Since self.rees.build_dir maps to /home/jovyan and data will be mounted
-            # at /home/jovyan/data, we need to create 'data' subdirectory here
-            data_dir_in_build = os.path.join(self.rees.build_dir, 'data')
-            os.makedirs(data_dir_in_build, exist_ok=True)
-            logging.debug(f"Pre-created data directory: {data_dir_in_build}")
 
             mnt_vol = {f'{os.path.join(self.host_data_parent_dir, self.rees.dataset_name)}': {'bind': os.path.join(self.container_data_mount_dir, self.rees.dataset_name), 'mode': 'ro'},
                         self.rees.build_dir: {'bind': f'{self.container_build_source_mount_dir}', 'mode': 'rw'}}
