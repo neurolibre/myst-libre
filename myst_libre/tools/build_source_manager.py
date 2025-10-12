@@ -117,7 +117,9 @@ class BuildSourceManager(AbstractClass):
             self.repo_object.remotes.origin.fetch()
 
             # Clean the working directory
-            exclude_args = ['-e', pattern.rstrip('/') for pattern in patterns_to_exclude]
+            exclude_args = []
+            for pattern in patterns_to_exclude:
+                exclude_args.extend(['-e', pattern.rstrip('/')])
             if self.preserve_cache:
                 self.cprint(f'Cleaning working directory (preserving _build and data)', "cyan")
             else:
