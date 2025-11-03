@@ -33,6 +33,7 @@ class MystMD(AbstractClass):
         #self.cprint(f"{os.environ}","light_grey")
         self.check_node_installed()
         self.check_mystmd_installed()
+        self.run_pid = None
 
     def check_node_installed(self):
         """
@@ -114,6 +115,8 @@ class MystMD(AbstractClass):
                                            cwd=self.build_dir)
             else:
                 process = subprocess.Popen(command, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, cwd=self.build_dir)
+            
+            self.run_pid = process.pid
 
             # Initialize logs
             stdout_log = ""
