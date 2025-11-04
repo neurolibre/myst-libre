@@ -112,9 +112,12 @@ class MystMD(AbstractClass):
                 process = subprocess.Popen(command, env=env, 
                                            preexec_fn=lambda: os.setgid(gid) or os.setuid(uid),
                                            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
-                                           cwd=self.build_dir)
+                                           cwd=self.build_dir, start_new_session=True)
             else:
-                process = subprocess.Popen(command, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, cwd=self.build_dir)
+                process = subprocess.Popen(command, env=env, 
+                                           stdout=subprocess.PIPE, stderr=subprocess.PIPE, 
+                                           text=True, cwd=self.build_dir,
+                                           start_new_session=True)
             
             self.run_pid = process.pid
 
