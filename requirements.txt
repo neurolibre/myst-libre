@@ -1,8 +1,9 @@
-dotenv
+python-dotenv
 PyGithub
 GitPython
 docker
-termcolor
+rich>=13.0.0
 mystmd
 requests
 repo2data==2.9.7
+pyyaml

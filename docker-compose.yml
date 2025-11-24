@@ -1,0 +1,65 @@
+version: '3.8'
+
+services:
+  myst-libre:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: myst-libre-dev
+
+    # Docker-in-Docker configuration
+    volumes:
+      # Mount Docker socket to access host Docker daemon
+      - /var/run/docker.sock:/var/run/docker.sock
+
+      # Mount workspace directory from host
+      # Adjust /home/user/workspace to your actual host path
+      - /home/user/workspace:/workspace
+
+      # IMPORTANT: Mount .env file as read-only
+      # Replace /home/user/.env with your actual .env file location
+      # Use ':ro' flag to mount as read-only (prevents accidental modifications)
+      - /home/user/.env:/workspace/config/.env:ro
+
+      # (Optional) Mount current directory for development
+      - .:/app
+
+    # Environment variables for Docker-in-Docker
+    environment:
+      # Path on the host machine corresponding to /workspace in container
+      # CRITICAL: Update this to match your host path
+      - HOST_WORKSPACE_PATH=/home/user/workspace
+
+      # Docker socket path (usually default)
+      - DOCKER_HOST=unix:///var/run/docker.sock
+
+      # ALTERNATIVE: Pass credentials via environment variables instead of .env
+      # Uncomment and set these if not using .env file
+      # - REGISTRY_USERNAME=${REGISTRY_USERNAME}
+      # - REGISTRY_PASSWORD=${REGISTRY_PASSWORD}
+      # - GITHUB_TOKEN=${GITHUB_TOKEN}
+
+    # Run as interactive terminal
+    stdin_open: true
+    tty: true
+
+    # Default command: Python shell (override with `command:` when needed)
+    command: python
+
+    # Resource limits (optional, adjust as needed)
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 4G
+        reservations:
+          cpus: '1'
+          memory: 2G
+
+    # Network configuration
+    networks:
+      - myst-network
+
+networks:
+  myst-network:
+    driver: bridge
