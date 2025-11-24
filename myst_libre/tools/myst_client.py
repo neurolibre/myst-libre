@@ -1,184 +1,260 @@
 """
 myst_client.py
 
-This module contains the MystMD class for managing MyST markdown operations such as building and converting files.
+Refactored MystMD client for managing MyST markdown operations.
 """
 
 import subprocess
 import os
-from myst_libre.abstract_class import AbstractClass
 import sys
-import grp, pwd
+import grp
+import pwd
+from typing import Optional, Tuple, Dict
+from pathlib import Path
+
+from ..abstract_class import AbstractClass
+
 
 class MystMD(AbstractClass):
     """
-    MystMD
+    MystMD client for managing MyST markdown operations.
 
-    A class to manage MyST markdown operations such as building and converting files.
-    
-    Args:
-        build_dir (str): Directory where the build will take place.
-        env_vars (dict): Environment variables needed for the build process.
-        executable (str): Name of the MyST executable. Default is 'myst'.
-    """    
-    def __init__(self, build_dir, env_vars, executable='myst'):
+    Handles building and converting MyST markdown files using the myst CLI.
+    """
+
+    def __init__(self, build_dir: str, env_vars: Dict[str, str], executable: str = 'myst'):
         """
-        Initialize the MystMD class with build directory, environment variables, and executable name.
+        Initialize the MystMD client.
+
+        Args:
+            build_dir: Directory where the build will take place
+            env_vars: Environment variables needed for the build process
+            executable: Name of the MyST executable (default: 'myst')
         """
         super().__init__()
         self.executable = executable
         self.build_dir = build_dir
         self.env_vars = env_vars
-        self.cprint(f"␤[Preflight checks]","light_grey")
-        #self.cprint(f"{os.environ}","light_grey")
-        self.check_node_installed()
-        self.check_mystmd_installed()
-        self.run_pid = None
+        self.run_pid: Optional[int] = None
 
-    def check_node_installed(self):
+        self.cprint("␤[Preflight checks]", "light_grey")
+        self._check_node_installed()
+        self._check_mystmd_installed()
+
+    def _check_node_installed(self):
         """
         Check if Node.js is installed and available in the system PATH.
-        
+
         Raises:
-            EnvironmentError: If Node.js is not installed or not found in PATH.
+            EnvironmentError: If Node.js is not installed or not found in PATH
         """
         try:
-            process = subprocess.Popen(['node', '--version'], 
-                                    env=os.environ, 
-                                    stdout=subprocess.PIPE, 
-                                    stderr=subprocess.PIPE, 
-                                    text=True)
+            process = subprocess.Popen(
+                ['node', '--version'],
+                env=os.environ,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True
+            )
             stdout, stderr = process.communicate()
-            if process.returncode != 0:
-                raise subprocess.CalledProcessError(process.returncode, process.args, stdout, stderr)
-            
-            self.cprint(f"✓ Node.js is installed: {stdout.strip()}", "green")
-        except subprocess.CalledProcessError as e:
-            self.cprint(f"✗ Error checking Node.js version: {e.stderr.strip()}", "red")
-            raise
-        except Exception as e:
-            self.cprint(f"✗ Unexpected error occurred: {str(e)}", "red")
-            raise
 
-    def check_mystmd_installed(self):
+            if process.returncode != 0:
+                raise subprocess.CalledProcessError(
+                    process.returncode, process.args, stdout, stderr
+                )
+
+            self.print_success(f"Node.js is installed: {stdout.strip()}")
+
+        except subprocess.CalledProcessError as e:
+            self.print_error(f"Error checking Node.js version: {e.stderr.strip()}")
+            raise
+        except (FileNotFoundError, OSError) as e:
+            self.print_error(f"Node.js executable not found: {str(e)}")
+            raise EnvironmentError("Node.js is not installed or not found in PATH") from e
+
+    def _check_mystmd_installed(self):
         """
         Check if MyST markdown tool is installed and available in the system PATH.
-        
+
         Raises:
-            EnvironmentError: If MyST markdown tool is not installed or not found in PATH.
+            EnvironmentError: If MyST markdown tool is not installed or not found in PATH
         """
         try:
-            process = subprocess.Popen([self.executable, '--version'], 
-                            env=os.environ, 
-                            stdout=subprocess.PIPE, 
-                            stderr=subprocess.PIPE, 
-                            text=True)
+            process = subprocess.Popen(
+                [self.executable, '--version'],
+                env=os.environ,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True
+            )
             stdout, stderr = process.communicate()
+
             if process.returncode != 0:
-                raise subprocess.CalledProcessError(process.returncode, process.args, stdout, stderr)
-            self.cprint(f"✓ mystmd is installed: {stdout.strip()}","green")
+                raise subprocess.CalledProcessError(
+                    process.returncode, process.args, stdout, stderr
+                )
+
+            self.print_success(f"mystmd is installed: {stdout.strip()}")
+
         except subprocess.CalledProcessError as e:
-            self.cprint(f"✗ Error checking myst version: {e.stderr.strip()}", "red")
+            self.print_error(f"Error checking myst version: {e.stderr.strip()}")
             raise
-        except Exception as e:
-            self.cprint(f"✗ Unexpected error occurred: {str(e)}", "red")
-            raise
-        
-    def run_command(self, *args, env_vars={}, user=None, group=None):
+        except (FileNotFoundError, OSError) as e:
+            self.print_error(f"MyST CLI executable not found: {str(e)}")
+            raise EnvironmentError("MyST CLI is not installed or not found in PATH") from e
+
+    def run_command(
+        self,
+        *args: str,
+        env_vars: Optional[Dict[str, str]] = None,
+        user: Optional[str] = None,
+        group: Optional[str] = None
+    ) -> Tuple[str, str]:
         """
         Run a command using the MyST executable.
-        
+
         Args:
-            *args: Arguments for the MyST executable command.
-            env_vars (dict): Environment variables to set for the command.
-        
+            *args: Arguments for the MyST executable command
+            env_vars: Environment variables to set for the command
+            user: Optional username to run command as
+            group: Optional group to run command as
+
         Returns:
-            str: Command output or None if failed.
+            Tuple of (stdout_log, stderr_log)
         """
+        if env_vars is None:
+            env_vars = {}
+
         command = [self.executable] + list(args)
+
         try:
             # Combine the current environment with the provided env_vars
             env = os.environ.copy()
             env.update(env_vars)
 
             # Debug information
-            self.cprint(f"🐞 Running command from directory: {os.getcwd()}", "light_grey")
-            self.cprint(f"🐞 Set cwd to: {self.build_dir}", "light_grey")
-            self.cprint(f"🐞 Command: {' '.join(command)}", "light_grey")
+            self.logger.debug(f"Running command from directory: {os.getcwd()}")
+            self.logger.debug(f"Set cwd to: {self.build_dir}")
+            self.logger.debug(f"Command: {' '.join(command)}")
 
+            # Log the Jupyter environment variables being used
+            if 'JUPYTER_BASE_URL' in env:
+                self.logger.info(f"JUPYTER_BASE_URL: {env['JUPYTER_BASE_URL']}")
+            if 'JUPYTER_TOKEN' in env:
+                self.logger.info(f"JUPYTER_TOKEN: {env['JUPYTER_TOKEN']}")
+            if 'port' in env:
+                self.logger.info(f"port: {env['port']}")
+
+            # Build subprocess arguments
+            popen_kwargs = {
+                'env': env,
+                'stdout': subprocess.PIPE,
+                'stderr': subprocess.PIPE,
+                'text': True,
+                'cwd': self.build_dir,
+                'start_new_session': True
+            }
+
+            # Add user/group if specified
             if user and group:
-                uid = pwd.getpwnam(user).pw_uid  
+                uid = pwd.getpwnam(user).pw_uid
                 gid = grp.getgrnam(group).gr_gid
-                process = subprocess.Popen(command, env=env, 
-                                           preexec_fn=lambda: os.setgid(gid) or os.setuid(uid),
-                                           stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
-                                           cwd=self.build_dir, start_new_session=True)
-            else:
-                process = subprocess.Popen(command, env=env, 
-                                           stdout=subprocess.PIPE, stderr=subprocess.PIPE, 
-                                           text=True, cwd=self.build_dir,
-                                           start_new_session=True)
-            
+                popen_kwargs['preexec_fn'] = lambda: os.setgid(gid) or os.setuid(uid)
+
+            # Start process
+            process = subprocess.Popen(command, **popen_kwargs)
             self.run_pid = process.pid
 
-            # Initialize logs
-            stdout_log = ""
-            stderr_log = ""
-            # Stream stdout in real-time
-            while True:
-                output = process.stdout.readline()
-                if output == "" and process.poll() is not None:
-                    break
-                if output:
-                    stdout_log += output  # No need to decode
-                    self.cprint(output, "light_grey")  # Print stdout in real-time
-            # Stream stderr in real-time
-            while True:
-                error = process.stderr.readline()
-                if error == "" and process.poll() is not None:
-                    break
-                if error:
-                    stderr_log += error  # No need to decode
-                    self.cprint(error, "red")  # Print stderr in real-time
+            # Stream output in real-time
+            stdout_log = self._stream_output(process.stdout, "light_grey")
+            stderr_log = self._stream_output(process.stderr, "red")
+
             process.wait()
-            return stdout_log, stderr_log  # Return both logs
+            return stdout_log, stderr_log
 
         except subprocess.CalledProcessError as e:
-            print(f"Error running command: {e}")
-            print(f"Command output: {e.output}")
-            print(f"Error output: {e.stderr}")
-            return "Error", e.stderr 
-        except Exception as e:
-            print(f"Unexpected error: {e}")
+            self.logger.error(f"Error running command: {e}")
+            self.logger.error(f"Command output: {e.output}")
+            self.logger.error(f"Error output: {e.stderr}")
+            return "Error", e.stderr or ""
+        except (OSError, PermissionError, FileNotFoundError) as e:
+            self.logger.error(f"System error running myst command: {e}")
             return "Error", str(e)
-    
-    def build(self, *args, user=None, group=None):
+
+    def _stream_output(self, stream, color: str) -> str:
+        """
+        Stream output from a pipe in real-time.
+
+        Args:
+            stream: Output stream to read from
+            color: Color to print output in
+
+        Returns:
+            Complete output as string
+        """
+        output_log = ""
+        for line in stream:
+            if line:
+                output_log += line
+                self.cprint(line.rstrip(), color)
+        return output_log
+
+    def build(
+        self,
+        *args: str,
+        user: Optional[str] = None,
+        group: Optional[str] = None
+    ) -> str:
         """
         Build the MyST markdown project with specified arguments.
-        
+
         Args:
-            *args: Variable length argument list for the myst command.
-        
+            *args: Variable length argument list for the myst build command
+            user: Optional username to run command as
+            group: Optional group to run command as
+
         Returns:
-            str: Command output or None if failed.
+            Combined stdout and stderr output
         """
-        os.chdir(self.build_dir)
-        stdout_log, stderr_log = self.run_command(*args, env_vars=self.env_vars, user=user, group=group)
+        stdout_log, stderr_log = self.run_command(
+            *args,
+            env_vars=self.env_vars,
+            user=user,
+            group=group
+        )
 
         combined_log = stdout_log
         if stderr_log:
             combined_log += "\n" + stderr_log
         return combined_log
-    
-    def convert(self, input_file, output_file, user=None, group=None):
+
+    def convert(
+        self,
+        input_file: str,
+        output_file: str,
+        user: Optional[str] = None,
+        group: Optional[str] = None
+    ) -> Tuple[str, str]:
         """
         Convert a MyST markdown file to another format.
-        
+
         Args:
-            input_file (str): Path to the input MyST markdown file.
-            output_file (str): Path to the output file.
-        
+            input_file: Path to the input MyST markdown file
+            output_file: Path to the output file
+            user: Optional username to run command as
+            group: Optional group to run command as
+
         Returns:
-            str: Command output or None if failed.
+            Tuple of (stdout_log, stderr_log)
         """
-        return self.run_command('convert', input_file, '-o', output_file,env_vars=self.env_vars, user=user, group=group)
+        return self.run_command(
+            'convert', input_file, '-o', output_file,
+            env_vars=self.env_vars,
+            user=user,
+            group=group
+        )
+
+
+# Deprecated aliases for backward compatibility
+check_node_installed = MystMD._check_node_installed
+check_mystmd_installed = MystMD._check_mystmd_installed
