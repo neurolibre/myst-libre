@@ -4,14 +4,13 @@ myst_client.py
 Refactored MystMD client for managing MyST markdown operations.
 """
 
-import subprocess
 import os
-import sys
 import grp
 import pwd
 import signal
 import socket
-import threading
+import subprocess
+import tempfile
 import time
 from typing import Optional, Tuple, Dict
 from pathlib import Path
@@ -134,6 +133,8 @@ class MystMD(AbstractClass):
             env_vars = {}
 
         command = [self.executable] + list(args)
+        stdout_path = None
+        stderr_path = None
 
         try:
             # Combine the current environment with the provided env_vars
@@ -153,12 +154,31 @@ class MystMD(AbstractClass):
             if 'port' in env:
                 self.logger.info(f"port: {env['port']}")
 
+            # Write stdout/stderr to temp files instead of pipes.
+            #
+            # Why not pipes + threads?
+            # Celery's gevent pool monkey-patches threading.Thread to
+            # greenlets.  Pipe reads (os.read on an fd) are blocking
+            # syscalls that gevent does NOT patch, so the reading
+            # greenlets starve the gevent hub and prevent heartbeats.
+            #
+            # Temp files avoid this entirely: the OS handles buffering,
+            # the subprocess never blocks on a full pipe, and our poll
+            # loop only does cooperative time.sleep() calls.
+            stdout_file = tempfile.NamedTemporaryFile(
+                mode='w+', suffix='.stdout.log', delete=False
+            )
+            stderr_file = tempfile.NamedTemporaryFile(
+                mode='w+', suffix='.stderr.log', delete=False
+            )
+            stdout_path = stdout_file.name
+            stderr_path = stderr_file.name
+
             # Build subprocess arguments
             popen_kwargs = {
                 'env': env,
-                'stdout': subprocess.PIPE,
-                'stderr': subprocess.PIPE,
-                'text': True,
+                'stdout': stdout_file,
+                'stderr': stderr_file,
                 'cwd': self.build_dir,
                 'start_new_session': True
             }
@@ -173,37 +193,18 @@ class MystMD(AbstractClass):
             process = subprocess.Popen(command, **popen_kwargs)
             self.run_pid = process.pid
 
-            # Stream stdout and stderr concurrently in separate threads
-            # to prevent pipe buffer deadlock. Reading sequentially can
-            # cause the process to block writing to stderr while Python
-            # is blocked reading stdout (or vice-versa) once the OS pipe
-            # buffer (~64 KB) fills up.
-            stdout_result = []
-            stderr_result = []
+            # Close our copy of the file handles — the subprocess owns them now.
+            stdout_file.close()
+            stderr_file.close()
 
-            stdout_thread = threading.Thread(
-                target=lambda: stdout_result.append(
-                    self._stream_output(process.stdout, "light_grey")
-                ),
-                daemon=True,
-            )
-            stderr_thread = threading.Thread(
-                target=lambda: stderr_result.append(
-                    self._stream_output(process.stderr, "red")
-                ),
-                daemon=True,
-            )
-
-            stdout_thread.start()
-            stderr_thread.start()
-
-            # Poll instead of process.wait() so we yield to the event
-            # loop between checks.  When running under gevent (Celery's
-            # gevent pool), time.sleep() is monkey-patched to
-            # gevent.sleep(), letting the heartbeat greenlet run.
-            # process.wait() calls os.waitpid() which is a blocking
-            # syscall that starves the event loop.
+            # Poll loop: fully cooperative under gevent.
+            # time.sleep() is monkey-patched to gevent.sleep(), yielding
+            # to the hub so heartbeats and other greenlets can run.
+            # We stream new output on each iteration by tailing the files.
+            stdout_pos = 0
+            stderr_pos = 0
             deadline = (time.monotonic() + timeout) if timeout else None
+
             while process.poll() is None:
                 if deadline is not None and time.monotonic() > deadline:
                     self.logger.error(
@@ -211,18 +212,24 @@ class MystMD(AbstractClass):
                         f"killing process tree"
                     )
                     self._kill_process_tree(process.pid)
-                    stdout_thread.join(timeout=10)
-                    stderr_thread.join(timeout=10)
                     raise subprocess.TimeoutExpired(
                         cmd=command, timeout=timeout
                     )
+                # Stream new output to logger
+                stdout_pos = self._tail_file(stdout_path, stdout_pos, "light_grey")
+                stderr_pos = self._tail_file(stderr_path, stderr_pos, "red")
                 time.sleep(1)
 
-            stdout_thread.join()
-            stderr_thread.join()
+            # Final flush — pick up anything written between last poll and exit
+            self._tail_file(stdout_path, stdout_pos, "light_grey")
+            self._tail_file(stderr_path, stderr_pos, "red")
 
-            stdout_log = stdout_result[0] if stdout_result else ""
-            stderr_log = stderr_result[0] if stderr_result else ""
+            # Read complete output
+            with open(stdout_path, 'r') as f:
+                stdout_log = f.read()
+            with open(stderr_path, 'r') as f:
+                stderr_log = f.read()
+
             return stdout_log, stderr_log
 
         except subprocess.TimeoutExpired:
@@ -235,6 +242,8 @@ class MystMD(AbstractClass):
         except (OSError, PermissionError, FileNotFoundError) as e:
             self.logger.error(f"System error running myst command: {e}")
             return "Error", str(e)
+        finally:
+            self._cleanup_files(stdout_path, stderr_path)
 
     @staticmethod
     def find_open_port(start: int = 3000, end: int = 3100) -> int:
@@ -284,23 +293,29 @@ class MystMD(AbstractClass):
         except (ProcessLookupError, OSError):
             pass
 
-    def _stream_output(self, stream, color: str) -> str:
-        """
-        Stream output from a pipe in real-time.
+    def _tail_file(self, path: str, pos: int, color: str) -> int:
+        """Read new content from a file starting at *pos*, log it, return new pos."""
+        try:
+            with open(path, 'r') as f:
+                f.seek(pos)
+                new_data = f.read()
+                if new_data:
+                    for line in new_data.splitlines():
+                        self.cprint(line, color)
+                return f.tell()
+        except FileNotFoundError:
+            return pos
 
-        Args:
-            stream: Output stream to read from
-            color: Color to print output in
-
-        Returns:
-            Complete output as string
-        """
-        output_log = ""
-        for line in stream:
-            if line:
-                output_log += line
-                self.cprint(line.rstrip(), color)
-        return output_log
+    @staticmethod
+    def _cleanup_files(*paths):
+        """Remove temp files, ignoring errors."""
+        for p in paths:
+            if p is None:
+                continue
+            try:
+                os.unlink(p)
+            except OSError:
+                pass
 
     def build(
         self,
