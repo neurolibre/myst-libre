@@ -17,6 +17,7 @@ from ..abstract_class import AbstractClass
 from ..models import ContainerConfig
 from ..exceptions import ContainerError, PortAllocationError
 from .path_utils import translate_container_path_to_host, should_translate_paths
+from .container_stats_collector import ContainerStatsCollector
 
 # Use TYPE_CHECKING to avoid circular import
 if TYPE_CHECKING:
@@ -26,7 +27,31 @@ from ..constants import (
     DEFAULT_CONTAINER_STOP_TIMEOUT,
     TOKEN_DIGEST_SIZE,
     DATA_DIR,
+    RESOURCE_RESERVE_CPUS,
+    RESOURCE_RESERVE_MEMORY_GB,
+    MIN_CONTAINER_CPUS,
+    MIN_CONTAINER_MEMORY_GB,
 )
+
+
+def _detect_system_resources():
+    """
+    Detect total system CPU count and physical memory.
+
+    Returns:
+        Tuple of (cpu_count, total_memory_bytes). Either can be None if detection fails.
+    """
+    cpu_count = os.cpu_count()
+
+    total_memory = None
+    try:
+        page_size = os.sysconf('SC_PAGE_SIZE')
+        page_count = os.sysconf('SC_PHYS_PAGES')
+        total_memory = page_size * page_count
+    except (ValueError, OSError, AttributeError):
+        pass
+
+    return cpu_count, total_memory
 
 
 class JupyterHubLocalSpawner(AbstractClass):
@@ -63,6 +88,14 @@ class JupyterHubLocalSpawner(AbstractClass):
               Required for proper networking when myst-libre runs inside a container
               and spawns sibling Jupyter containers. Default: False
 
+        Optional kwargs (resource limits):
+            - cpu_limit: CPU limit for the container. None = unlimited (default).
+                Float/int = number of CPU cores (e.g., 2.0).
+                "max" = auto-detect total CPUs, reserve some for host.
+            - memory_limit: Memory limit for the container. None = unlimited (default).
+                Int = bytes. String = Docker size like "4g", "512m".
+                "max" = auto-detect total memory, reserve some for host.
+
         Raises:
             TypeError: If rees is not a REES instance
             ValueError: If required kwargs are missing
@@ -84,7 +117,10 @@ class JupyterHubLocalSpawner(AbstractClass):
         self.port: Optional[int] = None
         self.jh_token: Optional[str] = None
         self.jh_url: Optional[str] = None
+        self._resolved_nano_cpus: Optional[int] = None
+        self._resolved_mem_limit = None
         self._cleanup_needed: bool = False
+        self._stats_collector: Optional[ContainerStatsCollector] = None
 
     def _validate_and_set_config(self, kwargs: Dict):
         """
@@ -121,7 +157,9 @@ class JupyterHubLocalSpawner(AbstractClass):
             container_data_mount_dir=self.container_data_mount_dir,
             port_range=kwargs.get('port_range', DEFAULT_PORT_RANGE),
             host_path_prefix=self.host_path_prefix,
-            container_path_prefix=self.container_path_prefix
+            container_path_prefix=self.container_path_prefix,
+            cpu_limit=kwargs.get('cpu_limit'),
+            memory_limit=kwargs.get('memory_limit'),
         )
 
     def find_open_port(self) -> int:
@@ -186,6 +224,13 @@ class JupyterHubLocalSpawner(AbstractClass):
         """
         if self.container:
             container_id = self.container.short_id
+
+            # Stop stats collection and display usage report before teardown
+            if self._stats_collector is not None:
+                self._stats_collector.stop()
+                self._stats_collector.display_report()
+                self._stats_collector = None
+
             try:
                 self.logger.info(f"Cleaning up container {container_id}")
                 self.container.stop(timeout=DEFAULT_CONTAINER_STOP_TIMEOUT)
@@ -280,6 +325,14 @@ class JupyterHubLocalSpawner(AbstractClass):
 
             # Log status information
             output_logs.extend(self._log_spawn_status())
+
+            # Start background container stats collection
+            self._stats_collector = ContainerStatsCollector(
+                container=self.container,
+                logger=self.logger,
+                console=self._console,
+            )
+            self._stats_collector.start()
 
         except (docker.errors.APIError, docker.errors.DockerException, OSError, ValueError, AttributeError) as e:
             self.logger.error(f"Could not spawn JupyterHub: {e}")
@@ -391,6 +444,66 @@ class JupyterHubLocalSpawner(AbstractClass):
 
         return volumes
 
+    def _resolve_resource_limits(self):
+        """
+        Resolve configured resource limits to Docker SDK parameters.
+
+        Handles the "max" sentinel by detecting system resources and
+        reserving some for the host OS.
+
+        Returns:
+            Tuple of (nano_cpus, mem_limit) — either can be None.
+        """
+        cpu_limit = self.container_config.cpu_limit
+        memory_limit = self.container_config.memory_limit
+
+        nano_cpus = None
+        mem_limit = None
+
+        if cpu_limit is not None:
+            if cpu_limit == "max":
+                total_cpus, _ = _detect_system_resources()
+                if total_cpus is not None:
+                    effective = max(MIN_CONTAINER_CPUS,
+                                    total_cpus - RESOURCE_RESERVE_CPUS)
+                    nano_cpus = int(effective * 1e9)
+                    self.logger.info(
+                        f"cpu_limit='max': {total_cpus} total cores, "
+                        f"reserving {RESOURCE_RESERVE_CPUS}, "
+                        f"allocating {effective} to container"
+                    )
+                else:
+                    self.logger.warning(
+                        "Cannot detect CPU count on this platform; "
+                        "ignoring cpu_limit='max'"
+                    )
+            else:
+                nano_cpus = int(float(cpu_limit) * 1e9)
+
+        if memory_limit is not None:
+            if memory_limit == "max":
+                _, total_memory = _detect_system_resources()
+                if total_memory is not None:
+                    reserve_bytes = RESOURCE_RESERVE_MEMORY_GB * (1024 ** 3)
+                    min_bytes = MIN_CONTAINER_MEMORY_GB * (1024 ** 3)
+                    effective = max(min_bytes, total_memory - reserve_bytes)
+                    mem_limit = int(effective)
+                    self.logger.info(
+                        f"memory_limit='max': "
+                        f"{total_memory / (1024**3):.1f}GB total, "
+                        f"reserving {RESOURCE_RESERVE_MEMORY_GB}GB, "
+                        f"allocating {effective / (1024**3):.1f}GB to container"
+                    )
+                else:
+                    self.logger.warning(
+                        "Cannot detect system memory on this platform; "
+                        "ignoring memory_limit='max'"
+                    )
+            else:
+                mem_limit = memory_limit
+
+        return nano_cpus, mem_limit
+
     def _spawn_container(self, entrypoint: str, volumes: Dict[str, Dict]):
         """
         Spawn the Docker container.
@@ -407,6 +520,17 @@ class JupyterHubLocalSpawner(AbstractClass):
             run_user = f"{os.getuid()}:{os.getgid()}"
             logging.debug(f"Running container as user {run_user}")
 
+            # Resolve resource limits
+            nano_cpus, mem_limit = self._resolve_resource_limits()
+            self._resolved_nano_cpus = nano_cpus
+            self._resolved_mem_limit = mem_limit
+
+            resource_kwargs = {}
+            if nano_cpus is not None:
+                resource_kwargs['nano_cpus'] = nano_cpus
+            if mem_limit is not None:
+                resource_kwargs['mem_limit'] = mem_limit
+
             self.container = self.rees.docker_client.containers.run(
                 self.rees.docker_image,
                 ports={f'{self.port}/tcp': self.port},
@@ -418,7 +542,8 @@ class JupyterHubLocalSpawner(AbstractClass):
                 entrypoint=entrypoint,
                 volumes=volumes,
                 user=run_user,
-                detach=True
+                detach=True,
+                **resource_kwargs
             )
 
             self._cleanup_needed = True
@@ -448,6 +573,30 @@ class JupyterHubLocalSpawner(AbstractClass):
         log('␤[Status]', 'light_grey')
         log(' ├─────── ⏺ running', 'green')
         log(f' └─────── Container {self.container.short_id} {self.container.name}', 'green')
+
+        # Limits section
+        log('␤[Limits]', 'light_grey')
+        nano_cpus = self._resolved_nano_cpus
+        mem_limit = self._resolved_mem_limit
+
+        if nano_cpus is not None or mem_limit is not None:
+            if nano_cpus is not None:
+                cpu_display = f"{nano_cpus / 1e9:.1f} cores"
+            else:
+                cpu_display = "unlimited"
+
+            if mem_limit is not None:
+                if isinstance(mem_limit, int):
+                    mem_display = self._format_size(mem_limit)
+                else:
+                    mem_display = str(mem_limit)
+            else:
+                mem_display = "unlimited"
+
+            log(f' ├───────── CPU: {cpu_display}', 'cyan')
+            log(f' └───────── Memory: {mem_display}', 'cyan')
+        else:
+            log(' └───────── No resource limits (unlimited)', 'yellow')
 
         # Debug info
         log(' ℹ Run the following commands in the terminal if you are debugging locally:', 'yellow')
@@ -515,6 +664,17 @@ class JupyterHubLocalSpawner(AbstractClass):
             log(' └───────── ℹ No dataset mounted', 'yellow')
 
         return output_logs
+
+    def display_usage_report(self) -> None:
+        """
+        Display container resource usage report (Rich table + plotext chart).
+
+        Call this after the build completes and before cleanup.
+        Also called automatically during cleanup().
+        """
+        if self._stats_collector is not None:
+            self._stats_collector.stop()
+            self._stats_collector.display_report()
 
     @staticmethod
     def _format_size(size_bytes: int) -> str:

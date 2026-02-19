@@ -27,7 +27,8 @@ dependencies = [
     "mystmd",
     "repo2data",
     "pyyaml",
-    "gitpython"
+    "gitpython",
+    "plotext>=5.2.0"
 ]
 
 [project.urls]

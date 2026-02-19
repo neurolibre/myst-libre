@@ -18,6 +18,12 @@ DEFAULT_IMAGE_TAG = 'latest'
 DEFAULT_PORT_RANGE: Tuple[int, int] = (8888, 10000)
 DEFAULT_CONTAINER_STOP_TIMEOUT = 10
 
+# Resource Limits (for "max" mode)
+RESOURCE_RESERVE_CPUS = 1          # CPU cores to reserve for host
+RESOURCE_RESERVE_MEMORY_GB = 2     # GB of RAM to reserve for host
+MIN_CONTAINER_CPUS = 1             # Floor for container CPU allocation
+MIN_CONTAINER_MEMORY_GB = 2        # Floor for container memory allocation
+
 # JupyterHub Configuration
 DEFAULT_JUPYTER_PORT = 8888
 TOKEN_DIGEST_SIZE = 20

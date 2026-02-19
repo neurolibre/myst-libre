@@ -7,3 +7,4 @@ mystmd
 requests
 repo2data==2.9.7
 pyyaml
+plotext>=5.2.0

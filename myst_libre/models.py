@@ -6,7 +6,8 @@ Domain models for myst-libre using dataclasses.
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Optional, Dict, Tuple
+import re
+from typing import Optional, Dict, Tuple, Union
 from datetime import datetime
 
 from .constants import (
@@ -120,6 +121,12 @@ class ContainerConfig:
             this translates container paths to host paths for volume mounts.
         container_path_prefix: (Optional) Container path prefix to replace.
             Default: "/" (root of container filesystem)
+        cpu_limit: Optional CPU limit. None = unlimited (default).
+            Float = number of CPU cores (e.g., 2.0, 0.5).
+            "max" = auto-detect system CPUs minus a reserve for the host.
+        memory_limit: Optional memory limit. None = unlimited (default).
+            Int = bytes. String = Docker-style size ("4g", "512m").
+            "max" = auto-detect system memory minus a reserve for the host.
     """
     host_build_source_parent_dir: Path
     container_build_source_mount_dir: str
@@ -128,6 +135,8 @@ class ContainerConfig:
     port_range: Tuple[int, int] = DEFAULT_PORT_RANGE
     host_path_prefix: Optional[str] = None
     container_path_prefix: str = "/"
+    cpu_limit: Optional[Union[float, str]] = None
+    memory_limit: Optional[Union[str, int]] = None
 
     def __post_init__(self):
         """Convert string paths to Path objects."""
@@ -155,6 +164,44 @@ class ContainerConfig:
             raise ConfigurationError(
                 f"Port range must be between 1024 and 65535, got: {self.port_range}"
             )
+
+        # Validate cpu_limit
+        if self.cpu_limit is not None:
+            if isinstance(self.cpu_limit, str):
+                if self.cpu_limit != "max":
+                    raise ConfigurationError(
+                        f"cpu_limit string must be 'max', got: '{self.cpu_limit}'"
+                    )
+            elif isinstance(self.cpu_limit, (int, float)):
+                if self.cpu_limit <= 0:
+                    raise ConfigurationError(
+                        f"cpu_limit must be positive, got: {self.cpu_limit}"
+                    )
+            else:
+                raise ConfigurationError(
+                    f"cpu_limit must be None, a positive number, or 'max', "
+                    f"got type: {type(self.cpu_limit).__name__}"
+                )
+
+        # Validate memory_limit
+        if self.memory_limit is not None:
+            if isinstance(self.memory_limit, str):
+                if self.memory_limit != "max" and not re.match(r'^\d+[bkmgBKMG]$', self.memory_limit):
+                    raise ConfigurationError(
+                        f"memory_limit string must be 'max' or a Docker size "
+                        f"like '4g', '512m', got: '{self.memory_limit}'"
+                    )
+            elif isinstance(self.memory_limit, int):
+                if self.memory_limit <= 0:
+                    raise ConfigurationError(
+                        f"memory_limit must be positive, got: {self.memory_limit}"
+                    )
+            else:
+                raise ConfigurationError(
+                    f"memory_limit must be None, a positive int (bytes), "
+                    f"a Docker size string like '4g', or 'max', "
+                    f"got type: {type(self.memory_limit).__name__}"
+                )
 
 
 @dataclass
