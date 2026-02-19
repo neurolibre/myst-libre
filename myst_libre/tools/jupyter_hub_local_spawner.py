@@ -484,7 +484,89 @@ class JupyterHubLocalSpawner(AbstractClass):
                 'yellow'
             )
 
+        # Data section
+        if self.rees.dataset_name:
+            host_data_path = Path(self.host_data_parent_dir) / self.rees.dataset_name
+            container_data_path = f"{self.container_data_mount_dir}/{self.rees.dataset_name}"
+
+            log('␤[Data]', 'light_grey')
+            log(f' ├── Dataset: {self.rees.dataset_name}', 'magenta')
+            log(f' ├───────── ✸ host: {host_data_path}', 'light_blue')
+            log(f' ├───────── ⎌ container: {container_data_path} (read-only)', 'light_blue')
+
+            # Show directory tree summary
+            tree_lines = self._get_data_tree(host_data_path)
+            if tree_lines:
+                for line in tree_lines[:-1]:
+                    log(f' │   {line}', 'cyan')
+                log(f' │   {tree_lines[-1]}', 'cyan')
+
+            total_size = self._get_dir_size(host_data_path)
+            log(f' └───────── ℹ Total size: {self._format_size(total_size)}', 'yellow')
+        else:
+            log('␤[Data]', 'light_grey')
+            log(' └───────── ℹ No dataset mounted', 'yellow')
+
         return output_logs
+
+    @staticmethod
+    def _format_size(size_bytes: int) -> str:
+        """Format byte count to human-readable string."""
+        for unit in ('B', 'KB', 'MB', 'GB', 'TB'):
+            if size_bytes < 1024:
+                return f"{size_bytes:.1f} {unit}" if unit != 'B' else f"{size_bytes} B"
+            size_bytes /= 1024
+        return f"{size_bytes:.1f} PB"
+
+    @staticmethod
+    def _get_dir_size(path: Path) -> int:
+        """Get total size of a directory in bytes."""
+        total = 0
+        try:
+            for entry in path.rglob('*'):
+                if entry.is_file():
+                    total += entry.stat().st_size
+        except OSError:
+            pass
+        return total
+
+    @staticmethod
+    def _get_data_tree(root: Path, max_entries: int = 20) -> List[str]:
+        """
+        Build a summary tree of a directory's contents.
+
+        Shows files/folders with sizes, truncating if there are too many entries.
+        """
+        if not root.exists():
+            return ['(directory not found)']
+
+        lines = []
+        try:
+            entries = sorted(root.iterdir(), key=lambda e: (e.is_file(), e.name))
+        except OSError:
+            return ['(unable to read directory)']
+
+        total = len(entries)
+        shown = entries[:max_entries]
+
+        for i, entry in enumerate(shown):
+            is_last = (i == len(shown) - 1) and total <= max_entries
+            prefix = '└── ' if is_last else '├── '
+            if entry.is_dir():
+                # Count items inside
+                try:
+                    n_children = sum(1 for _ in entry.iterdir())
+                except OSError:
+                    n_children = '?'
+                lines.append(f'{prefix}{entry.name}/ ({n_children} items)')
+            else:
+                size = JupyterHubLocalSpawner._format_size(entry.stat().st_size)
+                lines.append(f'{prefix}{entry.name} ({size})')
+
+        if total > max_entries:
+            lines.append(f'└── ... and {total - max_entries} more entries')
+
+        return lines
 
     def delete_stopped_containers(self):
         """Delete all stopped Docker containers."""

@@ -7,7 +7,7 @@ Refactored BuildSourceManager for handling Git repositories and build management
 import os
 import json
 import shutil
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Optional, Dict
 from datetime import datetime
 
@@ -253,7 +253,38 @@ class BuildSourceManager(AbstractClass):
                 with open(data_config_path, 'r') as f:
                     data = json.load(f)
 
-                dataset_name = data.get('projectName', self.config.repo_name)
+                dataset_name = data.get('projectName')
+
+                if dataset_name is None:
+                    # Look for projectName inside nested objects (multi-source downloads)
+                    project_names = [
+                        v['projectName']
+                        for v in data.values()
+                        if isinstance(v, dict) and 'projectName' in v
+                    ]
+                    if project_names:
+                        common = PurePosixPath(project_names[0])
+                        for name in project_names[1:]:
+                            common = PurePosixPath(os.path.commonpath([str(common), name]))
+                        if str(common) != '.':
+                            dataset_name = str(common)
+                            self.logger.info(
+                                f"Resolved dataset name from common root of {len(project_names)} "
+                                f"nested projectName entries: '{dataset_name}'"
+                            )
+                        else:
+                            dataset_name = self.config.repo_name
+                            self.logger.warning(
+                                f"Nested projectName entries share no common root "
+                                f"({project_names}), falling back to repo name: '{dataset_name}'"
+                            )
+                    else:
+                        dataset_name = self.config.repo_name
+                        self.logger.warning(
+                            f"No projectName found in data_requirement.json "
+                            f"(top-level or nested), falling back to repo name: '{dataset_name}'"
+                        )
+
                 if self.build_context:
                     self.build_context.dataset_name = dataset_name
                 return dataset_name
