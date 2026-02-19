@@ -78,15 +78,21 @@ class MystBuilder(AbstractClass):
         self,
         *args: str,
         user: Optional[str] = None,
-        group: Optional[str] = None
+        group: Optional[str] = None,
+        timeout: Optional[int] = None
     ) -> str:
         """
         Build the MyST project.
+
+        Allocates a dedicated port for the theme server (``--port``) so that
+        each build owns a known port rather than letting mystmd auto-allocate
+        from the 3000-3100 range.
 
         Args:
             *args: Arguments to pass to myst build command
             user: Optional username to run as
             group: Optional group to run as
+            timeout: Optional timeout in seconds for the build process
 
         Returns:
             Build output logs
@@ -96,7 +102,14 @@ class MystBuilder(AbstractClass):
         else:
             self.cprint('Starting MyST build (no execution)', 'yellow')
 
-        logs = self.myst_client.build('build', *args, user=user, group=group)
+        # Allocate a known port for the theme server so we can track it.
+        theme_port = MystMD.find_open_port()
+        self.logger.info(f"Allocated theme server port: {theme_port}")
+
+        build_args = ('build',) + args + ('--port', str(theme_port))
+        logs = self.myst_client.build(
+            *build_args, user=user, group=group, timeout=timeout
+        )
 
         # Check if build was successful
         build_failed = logs and (
@@ -111,3 +124,11 @@ class MystBuilder(AbstractClass):
             self.hub.rees.save_successful_build()
 
         return logs
+
+    def cleanup(self):
+        """Kill the myst process tree and release all resources.
+
+        Safe to call multiple times, after success or failure, or even
+        when no build was started.
+        """
+        self.myst_client.cleanup()

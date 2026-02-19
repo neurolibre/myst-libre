@@ -9,6 +9,10 @@ import os
 import sys
 import grp
 import pwd
+import signal
+import socket
+import threading
+import time
 from typing import Optional, Tuple, Dict
 from pathlib import Path
 
@@ -108,7 +112,8 @@ class MystMD(AbstractClass):
         *args: str,
         env_vars: Optional[Dict[str, str]] = None,
         user: Optional[str] = None,
-        group: Optional[str] = None
+        group: Optional[str] = None,
+        timeout: Optional[int] = None
     ) -> Tuple[str, str]:
         """
         Run a command using the MyST executable.
@@ -118,6 +123,9 @@ class MystMD(AbstractClass):
             env_vars: Environment variables to set for the command
             user: Optional username to run command as
             group: Optional group to run command as
+            timeout: Optional timeout in seconds. If the process does not
+                     complete within this time, the entire process tree is
+                     killed and a subprocess.TimeoutExpired is raised.
 
         Returns:
             Tuple of (stdout_log, stderr_log)
@@ -165,13 +173,51 @@ class MystMD(AbstractClass):
             process = subprocess.Popen(command, **popen_kwargs)
             self.run_pid = process.pid
 
-            # Stream output in real-time
-            stdout_log = self._stream_output(process.stdout, "light_grey")
-            stderr_log = self._stream_output(process.stderr, "red")
+            # Stream stdout and stderr concurrently in separate threads
+            # to prevent pipe buffer deadlock. Reading sequentially can
+            # cause the process to block writing to stderr while Python
+            # is blocked reading stdout (or vice-versa) once the OS pipe
+            # buffer (~64 KB) fills up.
+            stdout_result = []
+            stderr_result = []
 
-            process.wait()
+            stdout_thread = threading.Thread(
+                target=lambda: stdout_result.append(
+                    self._stream_output(process.stdout, "light_grey")
+                ),
+                daemon=True,
+            )
+            stderr_thread = threading.Thread(
+                target=lambda: stderr_result.append(
+                    self._stream_output(process.stderr, "red")
+                ),
+                daemon=True,
+            )
+
+            stdout_thread.start()
+            stderr_thread.start()
+
+            try:
+                process.wait(timeout=timeout)
+            except subprocess.TimeoutExpired:
+                self.logger.error(
+                    f"myst process (PID {process.pid}) timed out after {timeout}s, "
+                    f"killing process tree"
+                )
+                self._kill_process_tree(process.pid)
+                stdout_thread.join(timeout=10)
+                stderr_thread.join(timeout=10)
+                raise
+
+            stdout_thread.join()
+            stderr_thread.join()
+
+            stdout_log = stdout_result[0] if stdout_result else ""
+            stderr_log = stderr_result[0] if stderr_result else ""
             return stdout_log, stderr_log
 
+        except subprocess.TimeoutExpired:
+            raise
         except subprocess.CalledProcessError as e:
             self.logger.error(f"Error running command: {e}")
             self.logger.error(f"Command output: {e.output}")
@@ -180,6 +226,54 @@ class MystMD(AbstractClass):
         except (OSError, PermissionError, FileNotFoundError) as e:
             self.logger.error(f"System error running myst command: {e}")
             return "Error", str(e)
+
+    @staticmethod
+    def find_open_port(start: int = 3000, end: int = 3100) -> int:
+        """Find an available port in the given range.
+
+        Uses the same default range as mystmd's theme server (3000-3100).
+        """
+        for port in range(start, end):
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                try:
+                    s.bind(('localhost', port))
+                    return port
+                except OSError:
+                    continue
+        raise RuntimeError(f"No available port in range {start}-{end}")
+
+    def cleanup(self):
+        """Kill the myst process tree if it is still running.
+
+        Safe to call multiple times or when no process was started.
+        """
+        if self.run_pid is not None:
+            self.logger.info(f"Cleaning up myst process tree (PID {self.run_pid})")
+            self._kill_process_tree(self.run_pid)
+            self.run_pid = None
+
+    def _kill_process_tree(self, pid: int):
+        """
+        Kill an entire process tree by sending SIGTERM then SIGKILL to the
+        process group. Works because we launch subprocesses with
+        start_new_session=True, making the child the session/group leader.
+        """
+        try:
+            pgid = os.getpgid(pid)
+            self.logger.info(f"Sending SIGTERM to process group {pgid}")
+            os.killpg(pgid, signal.SIGTERM)
+        except (ProcessLookupError, OSError) as e:
+            self.logger.debug(f"Process group already gone on SIGTERM: {e}")
+            return
+
+        # Give processes a few seconds to shut down gracefully
+        time.sleep(3)
+
+        try:
+            os.killpg(pgid, signal.SIGKILL)
+            self.logger.info(f"Sent SIGKILL to process group {pgid}")
+        except (ProcessLookupError, OSError):
+            pass
 
     def _stream_output(self, stream, color: str) -> str:
         """
@@ -203,7 +297,8 @@ class MystMD(AbstractClass):
         self,
         *args: str,
         user: Optional[str] = None,
-        group: Optional[str] = None
+        group: Optional[str] = None,
+        timeout: Optional[int] = None
     ) -> str:
         """
         Build the MyST markdown project with specified arguments.
@@ -212,6 +307,7 @@ class MystMD(AbstractClass):
             *args: Variable length argument list for the myst build command
             user: Optional username to run command as
             group: Optional group to run command as
+            timeout: Optional timeout in seconds for the build process
 
         Returns:
             Combined stdout and stderr output
@@ -220,7 +316,8 @@ class MystMD(AbstractClass):
             *args,
             env_vars=self.env_vars,
             user=user,
-            group=group
+            group=group,
+            timeout=timeout
         )
 
         combined_log = stdout_log
@@ -233,7 +330,8 @@ class MystMD(AbstractClass):
         input_file: str,
         output_file: str,
         user: Optional[str] = None,
-        group: Optional[str] = None
+        group: Optional[str] = None,
+        timeout: Optional[int] = None
     ) -> Tuple[str, str]:
         """
         Convert a MyST markdown file to another format.
@@ -243,6 +341,7 @@ class MystMD(AbstractClass):
             output_file: Path to the output file
             user: Optional username to run command as
             group: Optional group to run command as
+            timeout: Optional timeout in seconds for the conversion process
 
         Returns:
             Tuple of (stdout_log, stderr_log)
@@ -251,7 +350,8 @@ class MystMD(AbstractClass):
             'convert', input_file, '-o', output_file,
             env_vars=self.env_vars,
             user=user,
-            group=group
+            group=group,
+            timeout=timeout
         )
 
 
