@@ -322,7 +322,8 @@ class JupyterHubLocalSpawner(AbstractClass):
 
     def _prepare_data_directory(self):
         """
-        Pre-create data directory to prevent Docker from creating it as root.
+        Pre-create data directory and dataset subdirectory to prevent Docker
+        from creating them as root via bind mount.
 
         This must be done after checkout to avoid interfering with git operations.
         """
@@ -332,6 +333,12 @@ class JupyterHubLocalSpawner(AbstractClass):
         data_dir_in_build = self.rees.build_dir / DATA_DIR
         data_dir_in_build.mkdir(exist_ok=True)
         logging.debug(f"Pre-created data directory: {data_dir_in_build}")
+
+        # Also pre-create the dataset subdirectory so Docker doesn't create it as root
+        if self.rees.dataset_name:
+            dataset_dir = data_dir_in_build / self.rees.dataset_name
+            dataset_dir.mkdir(parents=True, exist_ok=True)
+            logging.debug(f"Pre-created dataset mount point: {dataset_dir}")
 
     def _build_volume_mounts(self) -> Dict[str, Dict]:
         """
