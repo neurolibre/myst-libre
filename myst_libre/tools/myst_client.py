@@ -197,17 +197,26 @@ class MystMD(AbstractClass):
             stdout_thread.start()
             stderr_thread.start()
 
-            try:
-                process.wait(timeout=timeout)
-            except subprocess.TimeoutExpired:
-                self.logger.error(
-                    f"myst process (PID {process.pid}) timed out after {timeout}s, "
-                    f"killing process tree"
-                )
-                self._kill_process_tree(process.pid)
-                stdout_thread.join(timeout=10)
-                stderr_thread.join(timeout=10)
-                raise
+            # Poll instead of process.wait() so we yield to the event
+            # loop between checks.  When running under gevent (Celery's
+            # gevent pool), time.sleep() is monkey-patched to
+            # gevent.sleep(), letting the heartbeat greenlet run.
+            # process.wait() calls os.waitpid() which is a blocking
+            # syscall that starves the event loop.
+            deadline = (time.monotonic() + timeout) if timeout else None
+            while process.poll() is None:
+                if deadline is not None and time.monotonic() > deadline:
+                    self.logger.error(
+                        f"myst process (PID {process.pid}) timed out after {timeout}s, "
+                        f"killing process tree"
+                    )
+                    self._kill_process_tree(process.pid)
+                    stdout_thread.join(timeout=10)
+                    stderr_thread.join(timeout=10)
+                    raise subprocess.TimeoutExpired(
+                        cmd=command, timeout=timeout
+                    )
+                time.sleep(1)
 
             stdout_thread.join()
             stderr_thread.join()
