@@ -231,6 +231,17 @@ class JupyterHubLocalSpawner(AbstractClass):
                 self._stats_collector.display_report()
                 self._stats_collector = None
 
+            # Dump container (Jupyter server) logs before destroying it
+            try:
+                container_logs = self.container.logs(tail=200).decode('utf-8')
+                if container_logs.strip():
+                    self.logger.info(f"── Container {container_id} logs (last 200 lines) ──")
+                    for line in container_logs.splitlines():
+                        self.logger.info(f"  [container] {line}")
+                    self.logger.info(f"── End container {container_id} logs ──")
+            except Exception:
+                pass
+
             try:
                 self.logger.info(f"Cleaning up container {container_id}")
                 self.container.stop(timeout=DEFAULT_CONTAINER_STOP_TIMEOUT)
