@@ -87,7 +87,7 @@ class AbstractClass:
             styles.append(bg_color)
 
         style = ' '.join(styles) if styles else None
-        self._console.print(message, style=style)
+        self._console.print(message, style=style, markup=False, highlight=False)
 
     def print_success(self, message: str):
         """Print a success message in green."""
