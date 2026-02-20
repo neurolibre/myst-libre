@@ -362,7 +362,9 @@ class JupyterHubLocalSpawner(AbstractClass):
             return (
                 f'jupyter server --allow-root --ip 0.0.0.0 --log-level=DEBUG '
                 f'--IdentityProvider.token="{self.jh_token}" '
-                f'--ServerApp.port="{self.port}"'
+                f'--ServerApp.port="{self.port}" '
+                f'--ServerApp.websocket_ping_interval=0 '
+                f'--ServerApp.websocket_ping_timeout=0'
             )
 
     def _prepare_repository(self):

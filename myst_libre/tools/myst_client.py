@@ -154,31 +154,31 @@ class MystMD(AbstractClass):
             if 'port' in env:
                 self.logger.info(f"port: {env['port']}")
 
-            # Write stdout/stderr to temp files instead of pipes.
+            # Write ALL output (stdout + stderr) to a single temp file.
             #
-            # Why not pipes + threads?
+            # Why a temp file instead of pipes?
             # Celery's gevent pool monkey-patches threading.Thread to
             # greenlets.  Pipe reads (os.read on an fd) are blocking
             # syscalls that gevent does NOT patch, so the reading
             # greenlets starve the gevent hub and prevent heartbeats.
             #
-            # Temp files avoid this entirely: the OS handles buffering,
-            # the subprocess never blocks on a full pipe, and our poll
-            # loop only does cooperative time.sleep() calls.
-            stdout_file = tempfile.NamedTemporaryFile(
-                mode='w+', suffix='.stdout.log', delete=False
+            # Why merge stderr into stdout?
+            # mystmd logs errors (including notebook tracebacks) to stderr
+            # via console.error.  Keeping them separate risks losing the
+            # traceback content if anything goes wrong with the second
+            # file/stream.  A single interleaved stream guarantees every
+            # line — including error tracebacks — is visible in the logs.
+            output_file = tempfile.NamedTemporaryFile(
+                mode='w+', suffix='.myst.log', delete=False
             )
-            stderr_file = tempfile.NamedTemporaryFile(
-                mode='w+', suffix='.stderr.log', delete=False
-            )
-            stdout_path = stdout_file.name
-            stderr_path = stderr_file.name
+            stdout_path = output_file.name
+            stderr_path = None  # not used, stderr merged into stdout
 
             # Build subprocess arguments
             popen_kwargs = {
                 'env': env,
-                'stdout': stdout_file,
-                'stderr': stderr_file,
+                'stdout': output_file,
+                'stderr': subprocess.STDOUT,  # merge stderr into stdout
                 'cwd': self.build_dir,
                 'start_new_session': True
             }
@@ -193,16 +193,13 @@ class MystMD(AbstractClass):
             process = subprocess.Popen(command, **popen_kwargs)
             self.run_pid = process.pid
 
-            # Close our copy of the file handles — the subprocess owns them now.
-            stdout_file.close()
-            stderr_file.close()
+            # Close our copy of the file handle — the subprocess owns it now.
+            output_file.close()
 
             # Poll loop: fully cooperative under gevent.
             # time.sleep() is monkey-patched to gevent.sleep(), yielding
             # to the hub so heartbeats and other greenlets can run.
-            # We stream new output on each iteration by tailing the files.
-            stdout_pos = 0
-            stderr_pos = 0
+            output_pos = 0
             deadline = (time.monotonic() + timeout) if timeout else None
 
             while process.poll() is None:
@@ -215,22 +212,17 @@ class MystMD(AbstractClass):
                     raise subprocess.TimeoutExpired(
                         cmd=command, timeout=timeout
                     )
-                # Stream new output to logger
-                stdout_pos = self._tail_file(stdout_path, stdout_pos, "light_grey")
-                stderr_pos = self._tail_file(stderr_path, stderr_pos, "red")
+                output_pos = self._tail_file(stdout_path, output_pos, "light_grey")
                 time.sleep(1)
 
             # Final flush — pick up anything written between last poll and exit
-            self._tail_file(stdout_path, stdout_pos, "light_grey")
-            self._tail_file(stderr_path, stderr_pos, "red")
+            self._tail_file(stdout_path, output_pos, "light_grey")
 
             # Read complete output
             with open(stdout_path, 'r') as f:
-                stdout_log = f.read()
-            with open(stderr_path, 'r') as f:
-                stderr_log = f.read()
+                all_output = f.read()
 
-            return stdout_log, stderr_log
+            return all_output, ""
 
         except subprocess.TimeoutExpired:
             raise
