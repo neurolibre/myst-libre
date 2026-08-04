@@ -15,7 +15,8 @@ import docker.errors
 
 from ..abstract_class import AbstractClass
 from ..models import ContainerConfig
-from ..exceptions import ContainerError, PortAllocationError
+from ..exceptions import ContainerError, PortAllocationError, ConfigurationError
+from ..utils.validation import is_contained_in
 from .path_utils import translate_container_path_to_host, should_translate_paths
 from .container_stats_collector import ContainerStatsCollector
 
@@ -26,6 +27,10 @@ from ..constants import (
     DEFAULT_PORT_RANGE,
     DEFAULT_CONTAINER_STOP_TIMEOUT,
     TOKEN_DIGEST_SIZE,
+    TOKEN_REDACTED,
+    METADATA_PROBE_ADDRESS,
+    METADATA_PROBE_TIMEOUT,
+    DEFAULT_METADATA_PROBE_IMAGE,
     DATA_DIR,
     RESOURCE_RESERVE_CPUS,
     RESOURCE_RESERVE_MEMORY_GB,
@@ -62,6 +67,10 @@ class JupyterHubLocalSpawner(AbstractClass):
     Provides port allocation, volume mounting, and container lifecycle management.
     """
 
+    # Networks whose metadata probe passed, shared across instances so the check
+    # costs one throwaway container per network per process, not one per build
+    _metadata_probe_cache: Dict[str, bool] = {}
+
     def __init__(self, rees: 'REES', **kwargs):
         """
         Initialize JupyterHub spawner.
@@ -87,6 +96,29 @@ class JupyterHubLocalSpawner(AbstractClass):
               spawned container's name instead of localhost for Jupyter connections.
               Required for proper networking when myst-libre runs inside a container
               and spawns sibling Jupyter containers. Default: False
+
+        Optional kwargs (data):
+            - allow_repo2data_download: Permit this run to fetch the dataset declared
+              in the repository's binder/data_requirement.json. Default: False.
+              When False (the default), data is never downloaded: the build uses
+              whatever has already been staged under host_data_parent_dir and warns
+              if nothing is there. Enable only for a dataset whose source and
+              destination you have reviewed. See _ensure_dataset.
+
+        Optional kwargs (network):
+            - container_network: Name of an existing Docker network to attach the
+                spawned container to. Default: None (Docker's default bridge).
+                Notebook code from a submitted repository runs with whatever network
+                access this network allows. Docker exposes no per-container egress
+                filtering, so use a dedicated network here and apply host firewall
+                rules (DOCKER-USER chain) to its bridge interface. See README.
+            - verify_metadata_blocked: Before spawning, confirm the instance metadata
+                service is unreachable from container_network, and refuse to spawn if
+                it is not. Defaults to True when container_network is set, False
+                otherwise. Catches firewall rules lost on reboot, which the network
+                existence check cannot see.
+            - metadata_probe_image: Minimal image used for that probe.
+                Default: 'busybox:latest'. Must be pullable or already present.
 
         Optional kwargs (resource limits):
             - cpu_limit: CPU limit for the container. None = unlimited (default).
@@ -121,6 +153,7 @@ class JupyterHubLocalSpawner(AbstractClass):
         self._resolved_mem_limit = None
         self._cleanup_needed: bool = False
         self._stats_collector: Optional[ContainerStatsCollector] = None
+        self.dataset_available: bool = False
 
     def _validate_and_set_config(self, kwargs: Dict):
         """
@@ -148,6 +181,26 @@ class JupyterHubLocalSpawner(AbstractClass):
         self.host_path_prefix: Optional[str] = kwargs.get('host_path_prefix')
         self.container_path_prefix: str = kwargs.get('container_path_prefix', '/')
         self.enable_dind: bool = kwargs.get('enable_dind', False)
+
+        # Data is never fetched automatically; see _ensure_dataset
+        self.allow_repo2data_download: bool = kwargs.get('allow_repo2data_download', False)
+
+        # Named Docker network for spawned containers. Docker has no per-container
+        # egress ACL, so blocking traffic (e.g. the OpenStack metadata service at
+        # 169.254.169.254) is done with host firewall rules; putting build
+        # containers on their own network lets those rules target this traffic by
+        # interface without touching other containers. None = Docker's default.
+        self.container_network: Optional[str] = kwargs.get('container_network')
+
+        # Probing is only meaningful when a dedicated network is in use, so it
+        # defaults on exactly when container_network is set
+        verify = kwargs.get('verify_metadata_blocked')
+        self.verify_metadata_blocked: bool = (
+            bool(self.container_network) if verify is None else bool(verify)
+        )
+        self.metadata_probe_image: str = kwargs.get(
+            'metadata_probe_image', DEFAULT_METADATA_PROBE_IMAGE
+        )
 
         # Create ContainerConfig for structured access
         self.container_config = ContainerConfig(
@@ -206,6 +259,145 @@ class JupyterHubLocalSpawner(AbstractClass):
         h.update(os.urandom(TOKEN_DIGEST_SIZE))
         return h.hexdigest()
 
+    def _verify_container_network(self):
+        """
+        Check that the configured Docker network exists before spawning.
+
+        myst-libre deliberately does not create the network. An auto-created one
+        would come up as a plain bridge with none of the host firewall rules
+        attached, so the build would succeed, look identical, and quietly have
+        unrestricted egress. Requiring the operator to create it keeps the
+        network's existence tied to the step where the rules are installed.
+
+        Raises:
+            ConfigurationError: If the network is configured but missing
+            ContainerError: If Docker could not be queried
+        """
+        if not self.container_network:
+            return
+
+        try:
+            self.rees.docker_client.networks.get(self.container_network)
+        except docker.errors.NotFound:
+            raise ConfigurationError(
+                f"Docker network '{self.container_network}' does not exist. "
+                f"myst-libre does not create it, because a network created "
+                f"automatically would have no egress rules attached. Create it "
+                f"and install the firewall rules first:\n"
+                f"  docker network create --driver bridge \\\n"
+                f"    --opt com.docker.network.bridge.name=br-{self.container_network} \\\n"
+                f"    {self.container_network}\n"
+                f"See docs/server-setup.md for the accompanying rules."
+            ) from None
+        except docker.errors.DockerException as e:
+            raise ContainerError(
+                f"Could not verify Docker network '{self.container_network}': {e}"
+            ) from e
+
+    def _verify_metadata_blocked(self):
+        """
+        Confirm the instance metadata service is unreachable from the build network.
+
+        _verify_container_network only proves the network exists, which is not
+        evidence that it is protected: Docker recreates its networks after a
+        reboot, but DOCKER-USER firewall rules do not survive one unless they
+        were persisted. That combination fails open and is invisible - the
+        network is there, the build runs, and egress is unrestricted. This check
+        tests the property that actually matters instead of a proxy for it.
+
+        The probe runs in a minimal image rather than the build image, which is
+        built from the submitted repository and could be crafted to report a
+        block that is not there.
+
+        Result is cached per network for the life of the process, so this costs
+        one throwaway container per network rather than one per build.
+
+        Raises:
+            ConfigurationError: If metadata is reachable, or the probe could not
+                be run (an inconclusive probe is treated as a failure)
+        """
+        if not self.verify_metadata_blocked:
+            return
+
+        network = self.container_network or 'default'
+        if self._metadata_probe_cache.get(network):
+            logging.debug(f"Metadata probe for '{network}' already passed this process")
+            return
+
+        probe = (
+            f"wget -q -T {METADATA_PROBE_TIMEOUT} -O /dev/null "
+            f"http://{METADATA_PROBE_ADDRESS}/ 2>/dev/null "
+            f"&& echo REACHABLE || echo BLOCKED"
+        )
+
+        run_kwargs = {
+            'entrypoint': ['/bin/sh', '-c'],
+            'command': [probe],
+            'remove': True,
+            'detach': False,
+            'network_disabled': False,
+        }
+        if self.container_network:
+            run_kwargs['network'] = self.container_network
+
+        try:
+            output = self.rees.docker_client.containers.run(
+                self.metadata_probe_image, **run_kwargs
+            )
+        except docker.errors.ImageNotFound:
+            raise ConfigurationError(
+                f"Metadata probe image '{self.metadata_probe_image}' is not available. "
+                f"Pre-pull it (docker pull {self.metadata_probe_image}), or pass "
+                f"metadata_probe_image=..., or disable the check with "
+                f"verify_metadata_blocked=False if you accept the risk."
+            ) from None
+        except docker.errors.DockerException as e:
+            raise ConfigurationError(
+                f"Could not verify that the metadata service is blocked on network "
+                f"'{network}': {e}. Refusing to spawn - an unverifiable probe is "
+                f"treated the same as a failed one."
+            ) from e
+
+        result = output.decode('utf-8', errors='replace') if isinstance(output, bytes) else str(output)
+
+        if 'BLOCKED' not in result:
+            raise ConfigurationError(
+                f"The instance metadata service at {METADATA_PROBE_ADDRESS} is "
+                f"REACHABLE from Docker network '{network}'. Build containers run "
+                f"code from submitted repositories, so this exposes instance "
+                f"user-data and injected credentials.\n"
+                f"Most likely the DOCKER-USER rules were lost on reboot and never "
+                f"persisted (the network survives a restart; the rules do not).\n"
+                f"  iptables -I DOCKER-USER -i br-{network} -d 169.254.0.0/16 -j REJECT\n"
+                f"  netfilter-persistent save\n"
+                f"See docs/server-setup.md sections 3 and 8."
+            )
+
+        self._metadata_probe_cache[network] = True
+        self.cprint(
+            f"🔒 Metadata service unreachable from '{network}'", "green"
+        )
+
+    def _redact(self, text: str) -> str:
+        """
+        Remove the JupyterHub token from text destined for a log.
+
+        The token grants code execution on the running server, and these logs
+        are collected by callers and can end up in build output. The Jupyter
+        server also prints the token itself (in its startup URL, and more
+        verbosely under --log-level=DEBUG), so container logs need the same
+        treatment as our own messages.
+
+        Args:
+            text: Text that may contain the token
+
+        Returns:
+            Text with every occurrence of the token replaced
+        """
+        if not text or not self.jh_token:
+            return text
+        return text.replace(self.jh_token, TOKEN_REDACTED)
+
     def __enter__(self):
         """Context manager entry point."""
         return self
@@ -233,7 +425,7 @@ class JupyterHubLocalSpawner(AbstractClass):
 
             # Dump container (Jupyter server) logs before destroying it
             try:
-                container_logs = self.container.logs(tail=200).decode('utf-8')
+                container_logs = self._redact(self.container.logs(tail=200).decode('utf-8'))
                 if container_logs.strip():
                     self.logger.info(f"── Container {container_id} logs (last 200 lines) ──")
                     for line in container_logs.splitlines():
@@ -279,9 +471,15 @@ class JupyterHubLocalSpawner(AbstractClass):
             List of log messages
 
         Raises:
+            ConfigurationError: If container_network is set but does not exist
             ContainerError: If container spawn fails
         """
         output_logs = []
+
+        # Fail before doing expensive work (clone, image pull) if the network
+        # the egress rules depend on is not there, or is not actually restricted
+        self._verify_container_network()
+        self._verify_metadata_blocked()
 
         try:
             # Allocate port and generate token
@@ -301,9 +499,8 @@ class JupyterHubLocalSpawner(AbstractClass):
             # Pre-create data directory to avoid permission issues
             self._prepare_data_directory()
 
-            # Download data if needed
-            if self.rees.dataset_name:
-                self.rees.repo2data_download(self.host_data_parent_dir)
+            # Resolve whether pre-staged data is available to mount
+            self._ensure_dataset()
 
             # Build volume mounts
             volumes = self._build_volume_mounts()
@@ -403,8 +600,99 @@ class JupyterHubLocalSpawner(AbstractClass):
         # Also pre-create the dataset subdirectory so Docker doesn't create it as root
         if self.rees.dataset_name:
             dataset_dir = data_dir_in_build / self.rees.dataset_name
+
+            # dataset_name is repository-controlled; never create outside the build tree
+            if not is_contained_in(dataset_dir, data_dir_in_build):
+                self.print_warning(
+                    f"Dataset mount point {dataset_dir} resolves outside "
+                    f"{data_dir_in_build}; not creating it"
+                )
+                return
+
             dataset_dir.mkdir(parents=True, exist_ok=True)
             logging.debug(f"Pre-created dataset mount point: {dataset_dir}")
+
+    def _dataset_host_path(self) -> Optional[Path]:
+        """
+        Host path where a declared dataset is expected to be staged.
+
+        Returns None if the path would resolve outside host_data_parent_dir.
+        The name itself is already screened by sanitize_dataset_name, but a
+        symlink planted at the destination could still redirect the mount, so
+        the resolved location is checked here too.
+        """
+        if not self.rees.dataset_name:
+            return None
+
+        candidate = Path(self.host_data_parent_dir) / self.rees.dataset_name
+
+        if not is_contained_in(candidate, self.host_data_parent_dir):
+            self.print_warning(
+                f"Dataset path {candidate} resolves outside "
+                f"{self.host_data_parent_dir}; refusing to use it"
+            )
+            return None
+
+        return candidate
+
+    @staticmethod
+    def _is_populated_dir(path: Path) -> bool:
+        """Check that a path is a directory with at least one entry."""
+        try:
+            return path.is_dir() and any(path.iterdir())
+        except OSError:
+            return False
+
+    def _ensure_dataset(self):
+        """
+        Determine whether the dataset declared by the repository can be mounted.
+
+        Data is NOT fetched automatically. A repository's data_requirement.json
+        can point at arbitrary sources, so running repo2data on submission would
+        let any repository pull unreviewed content onto the build host. Datasets
+        are instead staged out of band once the source and destination have been
+        approved, and a build simply uses whatever is already present.
+
+        Pass allow_repo2data_download=True to opt a single run back into
+        fetching, for use after a dataset has been approved.
+
+        Sets self.dataset_available, which gates the data volume mount.
+        """
+        self.dataset_available = False
+
+        dataset_path = self._dataset_host_path()
+        if dataset_path is None:
+            return
+
+        if self._is_populated_dir(dataset_path):
+            self.dataset_available = True
+            return
+
+        if not self.allow_repo2data_download:
+            self.print_warning(
+                f"Dataset '{self.rees.dataset_name}' is declared by "
+                f"{self.rees.gh_user_repo_name} but is not staged at {dataset_path}"
+            )
+            self.print_warning(
+                "Automatic repo2data downloads are disabled. The data must be "
+                "reviewed and staged before it can be used; building without it, "
+                "so any content that reads this dataset will fail to execute."
+            )
+            return
+
+        self.cprint(
+            f"⚠️  allow_repo2data_download is set - fetching {self.rees.dataset_name} "
+            f"as declared by {self.rees.gh_user_repo_name}",
+            "yellow"
+        )
+        self.rees.repo2data_download(self.host_data_parent_dir)
+
+        self.dataset_available = self._is_populated_dir(dataset_path)
+        if not self.dataset_available:
+            self.print_warning(
+                f"repo2data completed but {dataset_path} is still empty; "
+                "building without the data mount"
+            )
 
     def _build_volume_mounts(self) -> Dict[str, Dict]:
         """
@@ -436,9 +724,10 @@ class JupyterHubLocalSpawner(AbstractClass):
             }
         }
 
-        # Add data volume if dataset exists
-        if self.rees.dataset_name:
-            host_data_path = Path(self.host_data_parent_dir) / self.rees.dataset_name
+        # Add data volume only when the dataset is actually staged on the host.
+        # Mounting a missing path would let Docker create it as root.
+        if self.dataset_available:
+            host_data_path = self._dataset_host_path()
 
             # Translate data directory path if needed
             if should_translate_paths(self.host_path_prefix):
@@ -543,6 +832,9 @@ class JupyterHubLocalSpawner(AbstractClass):
                 resource_kwargs['nano_cpus'] = nano_cpus
             if mem_limit is not None:
                 resource_kwargs['mem_limit'] = mem_limit
+            if self.container_network:
+                resource_kwargs['network'] = self.container_network
+                logging.debug(f"Attaching container to network {self.container_network}")
 
             self.container = self.rees.docker_client.containers.run(
                 self.rees.docker_image,
@@ -615,7 +907,9 @@ class JupyterHubLocalSpawner(AbstractClass):
         log(' ℹ Run the following commands in the terminal if you are debugging locally:', 'yellow')
         log(f' port="{self.port}"', 'cyan')
         log(f' export JUPYTER_BASE_URL="{self.jh_url}"', 'cyan')
-        log(f' export JUPYTER_TOKEN="{self.jh_token}"', 'cyan')
+        # Never the real token: these logs are returned to callers and can be
+        # surfaced in build output. Read it from hub.jh_token when debugging.
+        log(f' export JUPYTER_TOKEN="{TOKEN_REDACTED}"  # see hub.jh_token', 'cyan')
 
         # Resources section
         log('␤[Resources]', 'light_grey')
@@ -654,7 +948,15 @@ class JupyterHubLocalSpawner(AbstractClass):
             )
 
         # Data section
-        if self.rees.dataset_name:
+        if self.rees.dataset_name and not self.dataset_available:
+            log('␤[Data]', 'light_grey')
+            log(f' ├── Dataset: {self.rees.dataset_name}', 'magenta')
+            log(
+                f' └───────── ⚠ not staged at '
+                f'{self._dataset_host_path()}, building without data',
+                'yellow'
+            )
+        elif self.dataset_available:
             host_data_path = Path(self.host_data_parent_dir) / self.rees.dataset_name
             container_data_path = f"{self.container_data_mount_dir}/{self.rees.dataset_name}"
 
@@ -801,7 +1103,7 @@ class JupyterHubLocalSpawner(AbstractClass):
             return ""
 
         try:
-            return self.container.logs(tail=tail).decode('utf-8')
+            return self._redact(self.container.logs(tail=tail).decode('utf-8'))
         except Exception as e:
             self.logger.error(f"Error getting container logs: {e}")
             return f"Error retrieving logs: {e}"

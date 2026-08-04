@@ -173,6 +173,10 @@ def main():
         container_build_source_mount_dir='/home/jovyan',
         host_data_parent_dir="/workspace/DATA",
         container_data_mount_dir='/home/jovyan/data',
+        # Data is never fetched automatically: the dataset named by the repo's
+        # binder/data_requirement.json must already be staged under
+        # host_data_parent_dir, or the build runs without it. Set
+        # allow_repo2data_download=True only for a source you have reviewed.
 
         # Docker-in-Docker configuration
         # host_path_prefix: The actual host path that corresponds to /workspace

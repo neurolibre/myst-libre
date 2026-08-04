@@ -24,7 +24,10 @@ hub = JupyterHubLocalSpawner(rees,
                         host_build_source_parent_dir = "/Users/agah/Desktop/tmp",
                         container_build_source_mount_dir = '/home/jovyan',
                         host_data_parent_dir = "/Users/agah/Desktop/tmp/DATA",
-                        container_data_mount_dir = '/home/jovyan/data')
+                        container_data_mount_dir = '/home/jovyan/data',
+                        # Data must already be staged under host_data_parent_dir;
+                        # pass allow_repo2data_download=True to fetch it instead.
+                        )
 
 # # This has to be called
 hub_logs = hub.spawn_jupyter_hub()

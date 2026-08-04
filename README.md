@@ -120,7 +120,7 @@ tmp/
 
 Repository will be mounted to the container as `/tmp/myst_repos/owner/repository/full_commit_SHA_A:/home/jovyan`.
 
-* If a [`repo2data`](https://github.com/SIMEXP/Repo2Data) manifest is found in the repository, the data will be downloaded to and cached at:
+* If a [`repo2data`](https://github.com/SIMEXP/Repo2Data) manifest is found in the repository, the dataset it names is expected to be **already staged** at:
 
 ```
 tmp/
@@ -128,13 +128,26 @@ tmp/
     └── my-dataset
 ```
 
-otherwise, it can be manually defined for an existing data under `/tmp/myst_data` as follows:
+**Data is never downloaded automatically.** A repository's `binder/data_requirement.json` can point at arbitrary sources, so running `repo2data` on any submitted repository would let it pull unreviewed content onto the build host. A build uses whatever is already present: if the directory is missing or empty, the build proceeds *without* the data mount and warns, so content that reads the dataset will fail to execute.
+
+To fetch data once you have reviewed its source and destination, opt a single run in:
+
+```python
+hub = JupyterHubLocalSpawner(rees_resources,
+                             host_build_source_parent_dir = '/tmp/myst_repos',
+                             allow_repo2data_download = True,  # off by default
+                             )
+```
+
+The dataset directory can also be named explicitly for data you staged yourself:
 
 ```
 rees_resources.dataset_name = "my-dataset"
 ```
 
-In either case, data will be mounted as `/tmp/myst_data/my-dataset:/home/jovyan/data/my-dataset`. If no data is provided, this step will be skipped.
+Dataset names are validated: `projectName` becomes a path component on both the host and in the container, so absolute paths and names containing `..` are rejected, and a name that resolves outside `host_data_parent_dir` (via a symlink, say) is refused.
+
+When the data is present it is mounted read-only as `/tmp/myst_data/my-dataset:/home/jovyan/data/my-dataset`. If no data is declared, this step is skipped.
 
 **Build your MyST article**
 
@@ -249,6 +262,60 @@ print(project_name)
 - `container_build_source_mount_dir`: Directory to mount build source in the container
 - `host_data_parent_dir`: Host directory for data
 - `host_build_source_parent_dir`: Host directory for build source
+- `allow_repo2data_download`: Permit this run to fetch the dataset declared in the repository's `binder/data_requirement.json` (default `False`; see the data section above)
+- `container_network`: Name of an existing Docker network to attach the spawned container to (default: Docker's default bridge; see "Restricting network access" below)
+- `verify_metadata_blocked`: Refuse to spawn if the instance metadata service is reachable from `container_network` (default: `True` when `container_network` is set)
+- `metadata_probe_image`: Minimal image used for that probe (default: `busybox:latest`)
+
+### Restricting network access from build containers
+
+> For a full server preparation runbook, see [docs/server-setup.md](docs/server-setup.md).
+
+Notebook code from a submitted repository executes inside the spawned container with whatever network access that container has. On the default bridge that includes the cloud instance metadata service — on OpenStack, `169.254.169.254`, which serves user-data and config-drive contents.
+
+Docker has no per-container egress ACL, so the block is applied with host firewall rules. Put build containers on their own network so the rules can target only that traffic:
+
+```bash
+docker network create --driver bridge \
+  --opt com.docker.network.bridge.name=br-mystbuild \
+  mystbuild
+```
+
+```python
+hub = JupyterHubLocalSpawner(rees_resources,
+                             container_network = 'mystbuild',
+                             )
+```
+
+Then block the metadata service for that interface. Use `DOCKER-USER`, which Docker evaluates before its own rules and does not overwrite:
+
+```bash
+# Instance metadata (OpenStack, and the same address on EC2/GCP)
+iptables -I DOCKER-USER -i br-mystbuild -d 169.254.0.0/16 -j REJECT
+# If IPv6 is enabled on the instance
+ip6tables -I DOCKER-USER -i br-mystbuild -d fe80::a9fe:a9fe -j REJECT
+```
+
+These rules match traffic *forwarded from* the container, so the host's own access to metadata (cloud-init, etc.) is unaffected. They do not survive a reboot on their own — persist them with `netfilter-persistent save` or the equivalent for your distribution.
+
+To also keep build containers off internal networks, add rules for the ranges you use, for example:
+
+```bash
+iptables -I DOCKER-USER -i br-mystbuild -d 10.0.0.0/8 -j REJECT
+```
+
+Verify from inside a build container before relying on any of this:
+
+```bash
+docker run --rm --network mystbuild curlimages/curl \
+  -s -m 3 http://169.254.169.254/openstack/ ; echo "exit=$?"
+```
+
+A non-zero exit (timeout or refused) means the rule is working.
+
+myst-libre also checks this itself: with `container_network` set, the spawner probes the metadata service from that network before building and refuses to start if it answers. The result is cached per network per process. This exists because the Docker network survives a reboot while `DOCKER-USER` rules do not, so "the network exists" is not evidence that it is protected.
+
+> **Note:** be careful before blocking `172.16.0.0/12` or the range holding your other Docker networks. In Docker-in-Docker mode myst-libre reaches the spawned Jupyter container by container IP, so blanket-blocking inter-container traffic will break the build.
 
 ### MystMD
 **Description**: Manages MyST markdown operations such as building and converting files.  
