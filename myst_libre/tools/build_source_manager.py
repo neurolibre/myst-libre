@@ -18,6 +18,7 @@ from git import Repo, GitCommandError
 from ..abstract_class import AbstractClass
 from ..models import REESConfig, CommitInfo, BuildContext
 from ..exceptions import GitOperationError, ConfigurationError
+from ..utils.validation import sanitize_dataset_name
 from ..constants import (
     DEFAULT_GIT_PROVIDER,
     BUILD_CACHE_DIR,
@@ -285,16 +286,35 @@ class BuildSourceManager(AbstractClass):
                             f"(top-level or nested), falling back to repo name: '{dataset_name}'"
                         )
 
+                # projectName is untrusted and becomes a path component on the
+                # host and in the container; refuse anything that could escape
+                safe_name = sanitize_dataset_name(dataset_name)
+                if safe_name is None:
+                    self.logger.error(
+                        f"Rejecting unsafe projectName {dataset_name!r} in "
+                        f"{DATA_REQUIREMENT_FILE}: dataset names must be relative "
+                        f"paths without '..' components. No dataset will be mounted."
+                    )
+                    if self.build_context:
+                        self.build_context.dataset_name = None
+                    return None
+
+                if safe_name != dataset_name:
+                    self.logger.info(
+                        f"Normalized dataset name {dataset_name!r} to {safe_name!r}"
+                    )
+
                 if self.build_context:
-                    self.build_context.dataset_name = dataset_name
-                return dataset_name
+                    self.build_context.dataset_name = safe_name
+                return safe_name
 
             except (json.JSONDecodeError, IOError) as e:
                 self.logger.warning(f"Failed to read data requirement file: {e}")
                 return None
         else:
             self.cprint(
-                f"Data requirement file not found at {data_config_path}, using repository name",
+                f"Data requirement file not found at {data_config_path}, "
+                f"no dataset will be downloaded or mounted",
                 "yellow"
             )
             if self.build_context:

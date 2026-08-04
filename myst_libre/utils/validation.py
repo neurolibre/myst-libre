@@ -5,7 +5,7 @@ Input validation utilities for URLs, paths, and other inputs.
 """
 
 import re
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 from typing import Optional
 from urllib.parse import urlparse
 
@@ -189,6 +189,78 @@ def sanitize_path(path: str, resolve: bool = True) -> Path:
         return path_obj
     except (ValueError, OSError) as e:
         raise ValueError(f"Invalid path: {e}") from e
+
+
+def sanitize_dataset_name(name: str) -> Optional[str]:
+    """
+    Validate a dataset name that will be used as a path component.
+
+    Dataset names come from 'projectName' in a repository's
+    data_requirement.json, which is untrusted input: it is appended to the host
+    data directory and to the container mount point. A name such as
+    '../../../../etc' would otherwise escape both, creating directories outside
+    the build tree and bind-mounting an arbitrary host directory into a
+    container the repository author controls.
+
+    Nested names ('project/subset') are legitimate and permitted; traversal and
+    absolute paths are not.
+
+    Args:
+        name: Candidate dataset name
+
+    Returns:
+        Normalized name, or None if it cannot be used safely
+
+    Example:
+        >>> sanitize_dataset_name('my-project')
+        'my-project'
+        >>> sanitize_dataset_name('project/subset')
+        'project/subset'
+        >>> sanitize_dataset_name('../../etc') is None
+        True
+        >>> sanitize_dataset_name('/etc/passwd') is None
+        True
+    """
+    if not name or not isinstance(name, str):
+        return None
+
+    if '\x00' in name or '\\' in name:
+        return None
+
+    # Reject absolute paths, including Windows drive/UNC forms
+    if name.startswith('/') or PureWindowsPath(name).is_absolute():
+        return None
+
+    parts = [p for p in name.split('/') if p and p != '.']
+
+    if not parts or any(p == '..' for p in parts):
+        return None
+
+    return '/'.join(parts)
+
+
+def is_contained_in(path: Path, parent: Path) -> bool:
+    """
+    Check that a path stays inside a parent directory once fully resolved.
+
+    Complements sanitize_dataset_name: a name can be free of traversal and
+    still escape if a symlink was planted at the destination. Resolving both
+    sides catches that.
+
+    Args:
+        path: Path to check
+        parent: Directory the path must remain within
+
+    Returns:
+        True if path is parent or lies beneath it
+    """
+    try:
+        resolved = Path(path).resolve()
+        resolved_parent = Path(parent).resolve()
+    except (OSError, RuntimeError):
+        return False
+
+    return resolved == resolved_parent or resolved_parent in resolved.parents
 
 
 def validate_docker_image_name(image_name: str) -> bool:

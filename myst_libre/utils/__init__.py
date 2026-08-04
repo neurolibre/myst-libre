@@ -11,6 +11,8 @@ from .validation import (
     validate_github_repo,
     validate_path,
     sanitize_path,
+    sanitize_dataset_name,
+    is_contained_in,
     validate_docker_image_name,
     validate_port
 )
@@ -27,6 +29,8 @@ __all__ = [
     'validate_github_repo',
     'validate_path',
     'sanitize_path',
+    'sanitize_dataset_name',
+    'is_contained_in',
     'validate_docker_image_name',
     'validate_port'
 ]
