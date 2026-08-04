@@ -87,24 +87,51 @@ class DockerRegistryClient(AbstractClass):
         # Determine source repository name
         src_name = self._determine_source_repo_name()
 
-        # Build search pattern using BinderHub naming conventions
+        # Preferred: reproduce the exact name BinderHub would publish, hash
+        # suffix included. Images built from differently-cased spellings of the
+        # same repo share a prefix and differ only in that suffix, so an exact
+        # match is the only way to pick the right one.
+        exact_name = BinderHubNaming.build_exact_image_name(
+            src_name,
+            self.config.bh_image_prefix,
+            self.config.bh_project_name
+        ).lower()
+
+        self.cprint(f"🔍 Exact image name: {exact_name}", "light_blue")
+
+        if exact_name in self.docker_images:
+            self.found_image_name = exact_name
+            self.list_tags()
+            return True
+
+        # Fallback: prefix match, anchored to a single hash segment so a repo
+        # whose name extends another's cannot match by accident.
         pattern = BinderHubNaming.build_search_pattern(
             src_name,
             self.config.bh_image_prefix,
             self.config.bh_project_name
         ).lower()
 
-        self.cprint(f"🔍 Search pattern: {pattern}", "light_blue")
+        matches = [image for image in self.docker_images if re.match(pattern, image)]
 
-        # Search for matching image
-        for image in self.docker_images:
-            if re.match(pattern, image):
-                self.found_image_name = image
-                self.list_tags()
-                return True
+        if matches:
+            self.print_warning(
+                f"No image named {exact_name}; falling back to prefix match "
+                f"'{pattern}', which found {len(matches)}: {', '.join(matches)}"
+            )
+            self.print_warning(
+                "This usually means the image was built from a differently-cased "
+                f"spelling of {src_name}. The hash suffix is derived from the "
+                "case-sensitive owner-repo slug, so the runtime attached here may "
+                "not correspond to this repository."
+            )
+            self.found_image_name = matches[0]
+            self.list_tags()
+            return True
 
         raise ImageNotFoundError(
-            f"No Docker image found matching pattern '{pattern}' in {self.config.registry_url}"
+            f"No Docker image named '{exact_name}' (nor matching pattern "
+            f"'{pattern}') in {self.config.registry_url}"
         )
 
     def _determine_source_repo_name(self) -> str:

@@ -49,6 +49,13 @@ BINDERHUB_CHAR_ENCODING = {
     '/': '-2d'
 }
 
+# BinderHub appends a short sha256 of the build slug to every image name. The
+# digest is taken over the *case-sensitive* slug, but the final name is
+# lowercased, so 'owner/My-Repo' and 'owner/my-repo' yield identical prefixes
+# and different suffixes. See BinderHubNaming.slug_hash.
+BINDERHUB_HASH_LENGTH = 6
+BINDERHUB_NAME_LIMIT = 255
+
 # Commit Info Defaults (for overridden images)
 DEFAULT_OVERRIDE_IMAGE_DATE = "2024-11-20"  # ISO format for datetime.fromisoformat()
 DEFAULT_OVERRIDE_IMAGE_MESSAGE = "Base runtime from myst-libre"
