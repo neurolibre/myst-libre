@@ -4,12 +4,15 @@ curvenote_client.py
 Refactored Curvenote client for managing Curvenote CLI operations.
 """
 
+import re
 import subprocess
 import os
 import sys
 import grp
 import pwd
 from typing import Optional, Tuple, Dict
+
+_ANSI_RE = re.compile(r'\x1b\[[0-9;]*[a-zA-Z]')
 
 from .authenticator import Authenticator
 
@@ -196,7 +199,8 @@ class Curvenote(Authenticator):
         for line in stream:
             if line:
                 output_log += line
-                self.cprint(line.rstrip(), color)
+                clean = _ANSI_RE.sub('', line.rstrip())
+                self.cprint(clean, color)
         return output_log
 
     def _combine_logs(self, stdout_log: str, stderr_log: str) -> str:

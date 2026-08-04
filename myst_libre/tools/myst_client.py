@@ -7,6 +7,7 @@ Refactored MystMD client for managing MyST markdown operations.
 import os
 import grp
 import pwd
+import re
 import signal
 import socket
 import subprocess
@@ -14,6 +15,8 @@ import tempfile
 import time
 from typing import Optional, Tuple, Dict
 from pathlib import Path
+
+_ANSI_RE = re.compile(r'\x1b\[[0-9;]*[a-zA-Z]')
 
 from ..abstract_class import AbstractClass
 
@@ -293,7 +296,11 @@ class MystMD(AbstractClass):
                 new_data = f.read()
                 if new_data:
                     for line in new_data.splitlines():
-                        self.cprint(line, color)
+                        # Strip ANSI escape codes so Rich Console and Celery's
+                        # LoggingProxy always see clean text.  The raw ANSI from
+                        # chalk/IPython causes lines to vanish in non-TTY contexts.
+                        clean = _ANSI_RE.sub('', line)
+                        self.cprint(clean, color)
                 return f.tell()
         except FileNotFoundError:
             return pos
