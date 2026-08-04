@@ -330,16 +330,23 @@ myst-libre also checks this itself: with `container_network` set, the spawner pr
 
 A `myst build` launches a tree — `myst` → `npm run start` → `node ./server.js` — that holds ports until it is torn down. Normal teardown kills the whole process group, but a worker crash or restart leaves no PID to signal and the tree survives as an orphan.
 
-myst-libre records each launched process group (pgid plus a start-time key) at spawn time. Call `reap_orphans()` once at worker startup, before accepting work:
+myst-libre records each launched process group at spawn time, along with the process that owns it. Under Celery, hook it to `celeryd_after_setup` — once per worker node, after setup, before children fork or any task is consumed:
 
 ```python
+from celery.signals import celeryd_after_setup
 from myst_libre.tools import MystMD
 
-reaped = MystMD.reap_orphans()
-if reaped:
-    logging.warning(f"Cleaned up {len(reaped)} orphaned myst process group(s)")
+@celeryd_after_setup.connect
+def reap_myst_orphans(sender, instance, **kwargs):
+    reaped = MystMD.reap_orphans()
+    if reaped:
+        logging.warning(f"Reaped {len(reaped)} orphaned myst process group(s)")
 ```
 
-Records are only acted on when the PID is still alive **and** its start-time key matches what was recorded — a mismatch means the PID was recycled, so the entry is dropped rather than signalled. Stale and dead entries are pruned on every call.
+Use `celeryd_after_setup`, not `worker_process_init` — the latter runs in every prefork child, so N reaps would race.
+
+**Concurrency safety.** A record is only reaped when the process that launched it is gone. A build running right now in a sibling worker has a live owner and is left untouched — without that rule, a worker restart during a long build would kill healthy work, since a live build and an orphan are indistinguishable from the myst process alone. Because of this, `reap_orphans()` is safe to call at any time, including from a periodic task; a long-lived worker accumulates orphans from crashed children that no startup hook will see.
+
+Orphan records are additionally re-checked against the recorded start-time key, so a recycled PID is dropped rather than signalled. Stale and dead entries are pruned on every call.
 
 > Ports are deliberately not used as the key here. With `myst build --execute`, mystmd finishes the entire execution phase before starting either server, so on a long build no port exists for most of its duration and both appear only near the end. The pgid is known at launch and stays valid throughout.

@@ -378,10 +378,18 @@ class MystMD(AbstractClass):
             logging.debug(f"Could not read pgid for {pid}, not tracking: {e}")
             return
 
+        # owner_* identifies the process that launched myst. Liveness of the
+        # myst process alone cannot distinguish an orphan from a build running
+        # right now in a sibling worker - both are alive with a matching key.
+        # Reaping keys off the owner being gone instead.
+        owner_pid = os.getpid()
+
         entry = {
             'pid': pid,
             'pgid': pgid,
             'start_key': _process_start_key(pid),
+            'owner_pid': owner_pid,
+            'owner_start_key': _process_start_key(owner_pid),
             'build_dir': str(self.build_dir),
             'recorded_at': time.time(),
         }
@@ -404,10 +412,19 @@ class MystMD(AbstractClass):
         """
         Kill myst process groups left behind by a previous run.
 
-        Call once at worker startup, before accepting work. Each record is only
-        acted on if the PID is still alive *and* its start key matches what was
-        recorded; a mismatch means the PID was recycled and the original process
-        is already gone, so it is dropped rather than signalled.
+        Safe to call at any time, including while sibling workers are building.
+        A record is only reaped when the process that launched it is gone: a
+        build in progress elsewhere has a live owner and is left alone. Without
+        that check this would kill healthy builds, since a live build and an
+        orphan look identical from the myst process alone.
+
+        The myst PID is then re-checked against its recorded start key, so a
+        recycled PID is dropped rather than signalled.
+
+        Call from celeryd_after_setup (once per worker node, before children
+        fork and before any task is consumed), and optionally from a periodic
+        task - a long-lived worker accumulates orphans from crashed children
+        that no startup hook will see.
 
         Args:
             state_file: Override the state file path (default: PROCESS_STATE_FILE)
@@ -425,6 +442,17 @@ class MystMD(AbstractClass):
                 pgid = entry.get('pgid')
                 if pid is None or pgid is None:
                     continue
+
+                # Owner still alive => this is someone's live build, hands off
+                owner_pid = entry.get('owner_pid')
+                if owner_pid is not None:
+                    owner_key = _process_start_key(owner_pid)
+                    if owner_key is not None and owner_key == entry.get('owner_start_key'):
+                        logging.debug(
+                            f"Skipping pid={pid}: owner {owner_pid} is still running"
+                        )
+                        survivors.append(entry)
+                        continue
 
                 current = _process_start_key(pid)
                 if current is None:
