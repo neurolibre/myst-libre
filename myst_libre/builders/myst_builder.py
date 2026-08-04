@@ -84,9 +84,16 @@ class MystBuilder(AbstractClass):
         """
         Build the MyST project.
 
-        Allocates a dedicated port for the theme server (``--port``) so that
-        each build owns a known port rather than letting mystmd auto-allocate
-        from the 3000-3100 range.
+        The theme server port is left to mystmd. Pinning it with ``--port``
+        meant reserving a port here and mystmd binding it only after
+        ``buildSite`` finishes - the whole execution phase later, up to hours on
+        a heavy paper. By then the reservation is stale and another build may
+        hold the port; before mystmd 1.10 a pinned port has no fallback, so the
+        collision is fatal. Letting mystmd allocate at bind time shrinks that
+        window to nothing.
+
+        Teardown does not need the port: the process group is killed as a whole
+        (see MystMD.cleanup and MystMD.reap_orphans).
 
         Args:
             *args: Arguments to pass to myst build command
@@ -102,11 +109,7 @@ class MystBuilder(AbstractClass):
         else:
             self.cprint('Starting MyST build (no execution)', 'yellow')
 
-        # Allocate a known port for the theme server so we can track it.
-        theme_port = MystMD.find_open_port()
-        self.logger.info(f"Allocated theme server port: {theme_port}")
-
-        build_args = ('build',) + args + ('--port', str(theme_port))
+        build_args = ('build',) + args
         logs = self.myst_client.build(
             *build_args, user=user, group=group, timeout=timeout
         )
