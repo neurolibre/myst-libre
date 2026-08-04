@@ -4,6 +4,9 @@ myst_client.py
 Refactored MystMD client for managing MyST markdown operations.
 """
 
+import fcntl
+import json
+import logging
 import os
 import grp
 import pwd
@@ -13,12 +16,52 @@ import socket
 import subprocess
 import tempfile
 import time
-from typing import Optional, Tuple, Dict
+from typing import Optional, Tuple, Dict, List
 from pathlib import Path
 
 _ANSI_RE = re.compile(r'\x1b\[[0-9;]*[a-zA-Z]')
 
 from ..abstract_class import AbstractClass
+from ..constants import PROCESS_STATE_FILE
+
+
+def _process_start_key(pid: int) -> Optional[str]:
+    """
+    Read a stable per-process start identifier, used to detect PID reuse.
+
+    A recorded PID alone is not safe to signal later: the OS recycles PIDs, so
+    by the time a stale record is reconciled that number may belong to something
+    unrelated. Pairing it with the process start time makes the record
+    self-validating.
+
+    No psutil dependency - /proc on Linux, ps(1) elsewhere.
+
+    Args:
+        pid: Process ID
+
+    Returns:
+        Opaque start-time string, or None if it could not be determined
+    """
+    # Linux: field 22 of /proc/<pid>/stat is starttime. Split on the last ')'
+    # because the comm field can itself contain spaces and parentheses.
+    try:
+        with open(f'/proc/{pid}/stat') as f:
+            return f.read().rsplit(')', 1)[1].split()[19]
+    except (OSError, IndexError):
+        pass
+
+    # macOS/BSD fallback
+    try:
+        result = subprocess.run(
+            ['ps', '-o', 'lstart=', '-p', str(pid)],
+            capture_output=True, text=True, timeout=5
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            return result.stdout.strip()
+    except (OSError, subprocess.SubprocessError):
+        pass
+
+    return None
 
 
 class MystMD(AbstractClass):
@@ -28,7 +71,13 @@ class MystMD(AbstractClass):
     Handles building and converting MyST markdown files using the myst CLI.
     """
 
-    def __init__(self, build_dir: str, env_vars: Dict[str, str], executable: str = 'myst'):
+    def __init__(
+        self,
+        build_dir: str,
+        env_vars: Dict[str, str],
+        executable: str = 'myst',
+        state_file: Optional[str] = None
+    ):
         """
         Initialize the MystMD client.
 
@@ -36,8 +85,11 @@ class MystMD(AbstractClass):
             build_dir: Directory where the build will take place
             env_vars: Environment variables needed for the build process
             executable: Name of the MyST executable (default: 'myst')
+            state_file: Path to the process state file used for orphan recovery
+                (default: PROCESS_STATE_FILE). See reap_orphans.
         """
         super().__init__()
+        self.state_file = Path(state_file or PROCESS_STATE_FILE)
         self.executable = executable
         self.build_dir = build_dir
         self.env_vars = env_vars
@@ -196,6 +248,10 @@ class MystMD(AbstractClass):
             process = subprocess.Popen(command, **popen_kwargs)
             self.run_pid = process.pid
 
+            # Record before anything can fail, so a crash from here on still
+            # leaves a reapable record
+            self._record_process(process.pid)
+
             # Close our copy of the file handle — the subprocess owns it now.
             output_file.close()
 
@@ -238,7 +294,174 @@ class MystMD(AbstractClass):
             self.logger.error(f"System error running myst command: {e}")
             return "Error", str(e)
         finally:
+            # The process is no longer ours to reap, whether it exited cleanly,
+            # timed out and was killed, or errored
+            if self.run_pid is not None:
+                self._forget_process(self.run_pid)
             self._cleanup_files(stdout_path, stderr_path)
+
+    # ------------------------------------------------------------------
+    # Orphan tracking
+    #
+    # Killing the process group handles teardown while this process is alive.
+    # It cannot help after a crash or worker restart, where no PID survives to
+    # signal - myst and its children (npm run start -> node ./server.js) stay
+    # up holding ports.
+    #
+    # Ports are the wrong key for this. With `myst build --execute`, mystmd runs
+    # buildSite (the whole execution phase) *before* it starts either server, so
+    # for a heavy paper no port exists for most of the build and both appear
+    # only near the end. Catching that would mean polling for the build's entire
+    # duration, and blocking syscalls in a background thread are exactly what
+    # starves the gevent hub under Celery (see run_command).
+    #
+    # The process group id is known at Popen time instead: immediately, for free,
+    # and valid for the whole build no matter what mystmd does internally.
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _read_state(path: Path) -> List[Dict]:
+        """Read the process state file. Returns [] if absent or unreadable."""
+        try:
+            with open(path) as f:
+                data = json.load(f)
+            return data if isinstance(data, list) else []
+        except (OSError, json.JSONDecodeError):
+            return []
+
+    @staticmethod
+    def _write_state(path: Path, entries: List[Dict]):
+        """Write the process state file atomically."""
+        tmp = f"{path}.{os.getpid()}.tmp"
+        try:
+            with open(tmp, 'w') as f:
+                json.dump(entries, f, indent=2)
+            os.replace(tmp, path)
+        except OSError as e:
+            logging.warning(f"Could not write process state file {path}: {e}")
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+
+    @classmethod
+    def _update_state(cls, path: Path, mutate):
+        """
+        Apply mutate(entries) -> entries under an exclusive lock.
+
+        Several workers can share one state file, so read-modify-write has to be
+        serialized. The lock is held only for a small JSON file, which keeps the
+        blocking window short enough not to matter under gevent.
+        """
+        lock_path = f"{path}.lock"
+        try:
+            fd = os.open(lock_path, os.O_CREAT | os.O_RDWR, 0o644)
+        except OSError as e:
+            logging.warning(f"Could not open state lock {lock_path}: {e}; proceeding unlocked")
+            cls._write_state(path, mutate(cls._read_state(path)))
+            return
+
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX)
+            cls._write_state(path, mutate(cls._read_state(path)))
+        finally:
+            try:
+                fcntl.flock(fd, fcntl.LOCK_UN)
+            finally:
+                os.close(fd)
+
+    def _record_process(self, pid: int):
+        """Record a launched myst process group so it can be reaped later."""
+        try:
+            pgid = os.getpgid(pid)
+        except OSError as e:
+            logging.debug(f"Could not read pgid for {pid}, not tracking: {e}")
+            return
+
+        entry = {
+            'pid': pid,
+            'pgid': pgid,
+            'start_key': _process_start_key(pid),
+            'build_dir': str(self.build_dir),
+            'recorded_at': time.time(),
+        }
+
+        self._update_state(
+            self.state_file,
+            lambda entries: [e for e in entries if e.get('pid') != pid] + [entry]
+        )
+        self.logger.debug(f"Tracking myst process pid={pid} pgid={pgid}")
+
+    def _forget_process(self, pid: int):
+        """Drop a process from the state file once it has been dealt with."""
+        self._update_state(
+            self.state_file,
+            lambda entries: [e for e in entries if e.get('pid') != pid]
+        )
+
+    @classmethod
+    def reap_orphans(cls, state_file: Optional[str] = None) -> List[Dict]:
+        """
+        Kill myst process groups left behind by a previous run.
+
+        Call once at worker startup, before accepting work. Each record is only
+        acted on if the PID is still alive *and* its start key matches what was
+        recorded; a mismatch means the PID was recycled and the original process
+        is already gone, so it is dropped rather than signalled.
+
+        Args:
+            state_file: Override the state file path (default: PROCESS_STATE_FILE)
+
+        Returns:
+            The entries that were reaped
+        """
+        path = Path(state_file or PROCESS_STATE_FILE)
+        reaped: List[Dict] = []
+
+        def mutate(entries):
+            survivors = []
+            for entry in entries:
+                pid = entry.get('pid')
+                pgid = entry.get('pgid')
+                if pid is None or pgid is None:
+                    continue
+
+                current = _process_start_key(pid)
+                if current is None:
+                    logging.info(f"Orphan record pid={pid} is gone, dropping")
+                    continue
+
+                if current != entry.get('start_key'):
+                    logging.info(
+                        f"Orphan record pid={pid} start key differs "
+                        f"(PID reused), dropping without signalling"
+                    )
+                    continue
+
+                logging.warning(
+                    f"Reaping orphaned myst process group pgid={pgid} "
+                    f"(pid={pid}, build_dir={entry.get('build_dir')})"
+                )
+                try:
+                    os.killpg(pgid, signal.SIGTERM)
+                except (ProcessLookupError, OSError) as e:
+                    logging.debug(f"Process group {pgid} already gone: {e}")
+                    continue
+                reaped.append(entry)
+
+            # Give the groups a moment, then force-kill whatever ignored SIGTERM
+            if reaped:
+                time.sleep(3)
+                for entry in reaped:
+                    try:
+                        os.killpg(entry['pgid'], signal.SIGKILL)
+                    except (ProcessLookupError, OSError):
+                        pass
+
+            return survivors
+
+        cls._update_state(path, mutate)
+        return reaped
 
     @staticmethod
     def find_open_port(start: int = 3000, end: int = 3100) -> int:
@@ -263,6 +486,7 @@ class MystMD(AbstractClass):
         if self.run_pid is not None:
             self.logger.info(f"Cleaning up myst process tree (PID {self.run_pid})")
             self._kill_process_tree(self.run_pid)
+            self._forget_process(self.run_pid)
             self.run_pid = None
 
     def _kill_process_tree(self, pid: int):

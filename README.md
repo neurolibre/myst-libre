@@ -324,3 +324,22 @@ myst-libre also checks this itself: with `container_network` set, the spawner pr
 - `build_dir`: Directory where the build will take place
 - `env_vars`: Environment variables needed for the build process
 - `executable`: Name of the MyST executable (default is 'myst')
+- `state_file`: Path to the process state file used for orphan recovery (default: `<tmpdir>/myst_libre_processes.json`)
+
+#### Reaping orphaned build processes
+
+A `myst build` launches a tree — `myst` → `npm run start` → `node ./server.js` — that holds ports until it is torn down. Normal teardown kills the whole process group, but a worker crash or restart leaves no PID to signal and the tree survives as an orphan.
+
+myst-libre records each launched process group (pgid plus a start-time key) at spawn time. Call `reap_orphans()` once at worker startup, before accepting work:
+
+```python
+from myst_libre.tools import MystMD
+
+reaped = MystMD.reap_orphans()
+if reaped:
+    logging.warning(f"Cleaned up {len(reaped)} orphaned myst process group(s)")
+```
+
+Records are only acted on when the PID is still alive **and** its start-time key matches what was recorded — a mismatch means the PID was recycled, so the entry is dropped rather than signalled. Stale and dead entries are pruned on every call.
+
+> Ports are deliberately not used as the key here. With `myst build --execute`, mystmd finishes the entire execution phase before starting either server, so on a long build no port exists for most of its duration and both appear only near the end. The pgid is known at launch and stays valid throughout.
