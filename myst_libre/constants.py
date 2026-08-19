@@ -15,6 +15,10 @@ DEFAULT_GIT_PROVIDER = 'https://github.com'
 # Docker Configuration
 DEFAULT_BINDER_IMAGE_PREFIX = 'binder-'
 DEFAULT_IMAGE_TAG = 'latest'
+# Page size requested from /v2/_catalog. A Docker distribution registry caps an
+# unparameterised catalog listing at 100 repositories and paginates the rest
+# behind a Link header, so the listing has to be walked, not read once.
+CATALOG_PAGE_SIZE = 1000
 
 # Container Configuration
 DEFAULT_PORT_RANGE: Tuple[int, int] = (8888, 10000)

@@ -9,13 +9,14 @@ import datetime
 import yaml
 from typing import Optional, List, Dict, Tuple
 from pathlib import Path
+from urllib.parse import urljoin
 
 from ..abstract_class import AbstractClass
 from ..models import REESConfig
 from ..exceptions import DockerRegistryError, ImageNotFoundError
 from ..utils import BinderHubNaming
 from ..utils.retry import retry_github_api
-from ..constants import MYST_CONFIG_FILE
+from ..constants import MYST_CONFIG_FILE, CATALOG_PAGE_SIZE
 from .rest_client import RestClient
 from .decorators import request_set_decorator
 
@@ -82,8 +83,6 @@ class DockerRegistryClient(AbstractClass):
         Raises:
             ImageNotFoundError: If no matching image is found
         """
-        self.get_image_list()
-
         # Determine source repository name
         src_name = self._determine_source_repo_name()
 
@@ -99,13 +98,18 @@ class DockerRegistryClient(AbstractClass):
 
         self.cprint(f"🔍 Exact image name: {exact_name}", "light_blue")
 
-        if exact_name in self.docker_images:
+        # Ask the registry about that one repository instead of looking it up in
+        # the catalog listing: the listing is paginated and a repository past
+        # the first page would otherwise read as missing.
+        tags = self._fetch_tags(exact_name)
+        if tags is not None:
             self.found_image_name = exact_name
-            self.list_tags()
+            self.found_image_tags = tags
             return True
 
         # Fallback: prefix match, anchored to a single hash segment so a repo
         # whose name extends another's cannot match by accident.
+        self.get_image_list()
         pattern = BinderHubNaming.build_search_pattern(
             src_name,
             self.config.bh_image_prefix,
@@ -250,16 +254,80 @@ class DockerRegistryClient(AbstractClass):
 
         return None
 
-    @request_set_decorator(success_status_code=200, set_attribute="docker_images", json_key="repositories")
-    def get_image_list(self):
+    def get_image_list(self) -> List[str]:
         """
         Get the list of images from the Docker registry.
 
+        Walks every page of /v2/_catalog: the registry caps a listing at its
+        own page size and points at the rest through a Link header, so reading
+        only the first response hides every repository beyond it.
+
         Returns:
-            HTTP response object
+            List of repository names
+
+        Raises:
+            DockerRegistryError: If a catalog page cannot be read
         """
-        repo_url = f"{self.config.registry_url}/v2/_catalog"
-        return self.rest_client.get(repo_url)
+        repositories: List[str] = []
+        url = f"{self.config.registry_url}/v2/_catalog?n={CATALOG_PAGE_SIZE}"
+        seen_urls = set()
+
+        while url and url not in seen_urls:
+            seen_urls.add(url)
+            response = self.rest_client.get(url)
+
+            if response.status_code != 200:
+                # Raise rather than return a short list: a failed listing that
+                # reads as an empty one turns any lookup into a spurious
+                # 'image not found'.
+                raise DockerRegistryError(
+                    f"Failed to list catalog: {response.status_code} {response.text}"
+                )
+
+            repositories.extend(response.json().get('repositories') or [])
+            url = self._next_catalog_url(response)
+
+        self.docker_images = repositories
+        return repositories
+
+    def _next_catalog_url(self, response) -> Optional[str]:
+        """
+        Resolve the next catalog page from a response's Link header.
+
+        Args:
+            response: HTTP response for a catalog page
+
+        Returns:
+            Absolute URL of the next page, or None on the last page
+        """
+        next_link = response.links.get('next', {}).get('url')
+        if not next_link:
+            return None
+        return urljoin(self.config.registry_url, next_link)
+
+    def _fetch_tags(self, image_name: str) -> Optional[List[str]]:
+        """
+        Fetch the tags of one repository.
+
+        Args:
+            image_name: Repository name to query
+
+        Returns:
+            Tag list if the repository exists (possibly empty), None if it does not
+        """
+        tags_url = f"{self.config.registry_url}/v2/{image_name}/tags/list"
+        response = self.rest_client.get(tags_url)
+
+        if response.status_code == 200:
+            return response.json().get('tags') or []
+
+        if response.status_code != 404:
+            self.logger.warning(
+                f"HTTP Error listing tags for {image_name}: "
+                f"{response.status_code} - {response.text}"
+            )
+
+        return None
 
     @request_set_decorator(success_status_code=200, set_attribute="found_image_tags", json_key="tags")
     def list_tags(self):
