@@ -9,6 +9,29 @@ class Authenticator(AbstractClass):
         self.dotenvloc = dotenvloc
         self._load_auth_from_env()
 
+    def __enter__(self):
+        """Context manager entry point."""
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        """Context manager exit point - ensures credential cleanup."""
+        self.cleanup()
+        return False  # Don't suppress exceptions
+
+    def cleanup(self):
+        """
+        Clean up authentication credentials from memory.
+
+        Overwrites sensitive data before clearing to prevent memory leaks.
+        """
+        if self._auth:
+            # Overwrite sensitive values before deletion
+            for key in list(self._auth.keys()):
+                if self._auth[key]:
+                    self._auth[key] = None
+            self._auth.clear()
+            self.logger.debug("Cleared authentication credentials from memory")
+
     def _load_auth_from_env(self):
         
         load_dotenv(os.path.join(self.dotenvloc,'.env'))

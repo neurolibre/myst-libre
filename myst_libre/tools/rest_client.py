@@ -17,9 +17,9 @@ class RestClient(Authenticator):
     Args:
         auth (dict): Authentication credentials.
     """
-    def __init__(self,dotenvloc = '.'):
-        print(dotenvloc)
+    def __init__(self, dotenvloc: str = '.'):
         super().__init__(dotenvloc)
+        self.logger.debug(f"Initializing RestClient with dotenv location: {dotenvloc}")
         self.session = requests.Session()
         self.session.auth = HTTPBasicAuth(self._auth['username'], self._auth['password'])
 

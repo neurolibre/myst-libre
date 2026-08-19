@@ -23,10 +23,12 @@ dependencies = [
     "docker",
     "python-dotenv",
     "PyGithub",
-    "termcolor",
+    "rich>=13.0.0",
     "mystmd",
     "repo2data",
-    "pyyaml"
+    "pyyaml",
+    "gitpython",
+    "plotext>=5.2.0"
 ]
 
 [project.urls]

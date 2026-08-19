@@ -6,19 +6,12 @@ from myst_libre.builders import MystBuilder
 
 rees = REES(dict(
     registry_url="https://binder-registry.conp.cloud",
-    gh_user_repo_name = "agahkarakuzu/mriscope",
-    dotenv = "/Users/agah/Desktop/neurolibre/myst_libre",
+    gh_user_repo_name = "roboneurolibre/QC-imaging-demographics",
+    gh_repo_commit_hash = "latest",
+    binder_image_tag = "latest",
+    dotenv = "/Users/agah/Desktop/dev/evidencepub/myst-libre",
     bh_project_name = "binder-registry.conp.cloud"
-    ))     
-
-
-# Under the hood it looks like this:
-# if rees.search_img_by_repo_name():
-#     print("🐳 Image name:",rees.found_image_name)
-#     print("🏷️ Unsorted tags:",rees.found_image_tags)
-
-# if rees.get_tags_sorted_by_date():
-#     print("🏷️ Sorted image tags:",rees.found_image_tags_sorted)
+))
 
 hub = JupyterHubLocalSpawner(rees,
                         host_build_source_parent_dir = "/Users/agah/Desktop/tmp",

@@ -7,3 +7,4 @@ from .jupyter_hub_local_spawner import JupyterHubLocalSpawner
 from .myst_client import MystMD
 from .curvenote_client import Curvenote
 from .authenticator import Authenticator
+from .container_stats_collector import ContainerStatsCollector
