@@ -418,10 +418,16 @@ class JupyterHubLocalSpawner(AbstractClass):
             container_id = self.container.short_id
 
             # Stop stats collection and display usage report before teardown
+            # The report is informational only: if it raises (e.g. an
+            # incompatible plotext), the container must still be torn down.
             if self._stats_collector is not None:
-                self._stats_collector.stop()
-                self._stats_collector.display_report()
-                self._stats_collector = None
+                try:
+                    self._stats_collector.stop()
+                    self._stats_collector.display_report()
+                except Exception as e:
+                    self.logger.warning(f"Could not display container usage report: {e}")
+                finally:
+                    self._stats_collector = None
 
             # Dump container (Jupyter server) logs before destroying it
             try:

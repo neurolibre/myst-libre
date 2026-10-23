@@ -170,6 +170,15 @@ class ContainerStatsCollector:
         cpu_vals = [s.cpu_percent for s in samples]
         mem_gb_vals = [s.memory_bytes / (1024 ** 3) for s in samples]
 
+        # plotext 6.0 removed the plotting API used below (clear_figure, plot,
+        # show, ...), so skip the chart rather than fail.
+        if not hasattr(plt, "clear_figure"):
+            self._console.print(
+                "[yellow]plotext 5.x required for the chart — skipping. "
+                "Install with: pip install 'plotext>=5.2,<6'[/yellow]"
+            )
+            return
+
         plt.clear_figure()
         plt.theme("dark")
         plt.plot_size(80, 20)

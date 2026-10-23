@@ -28,7 +28,7 @@ dependencies = [
     "repo2data",
     "pyyaml",
     "gitpython",
-    "plotext>=5.2.0"
+    "plotext>=5.2.0,<6"
 ]
 
 [project.urls]
