@@ -453,8 +453,8 @@ class BuildSourceManager(AbstractClass):
             self.print_success(f"Preserving successful build to {self.config.gh_repo_commit_hash}")
             report = save_build(Path(self.build_dir), commit_dir, previous=previous_dir)
             self.logger.info(
-                f"Saved build: {report.copied_bytes / 1e6:.1f} MB copied, "
-                f"{report.linked_bytes / 1e6:.1f} MB stored as links to identical files"
+                f"Saved build: {report.stored_bytes / 1e6:.1f} MB on disk, of which "
+                f"{report.shared_bytes / 1e6:.1f} MB is shared with other saved builds"
             )
 
             # Update latest.txt

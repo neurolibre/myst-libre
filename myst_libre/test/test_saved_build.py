@@ -76,7 +76,7 @@ class TestSaveBuild(unittest.TestCase):
         self.assertFalse(os.path.samefile(commit / '_build/site/content/index.json',
                                           previous / '_build/site/content/index.json'))
         self.assertEqual((previous / '_build/site/content/index.json').read_text(), '{"page": 1}')
-        self.assertGreater(report.linked_bytes, 0)
+        self.assertGreater(report.shared_bytes, 0)
 
     def test_the_working_folder_is_not_linked_to_the_saved_build(self):
         # mystmd rewrites files in place: a link from latest would change saved builds
@@ -138,3 +138,40 @@ class TestSaveSuccessfulBuild(unittest.TestCase):
             self.assertFalse((repo / ('b' * 40) / '_build' / 'execute').exists())
             self.assertTrue(os.path.samefile(repo / ('a' * 40) / '_build/site/public/fig.json',
                                              repo / ('b' * 40) / '_build/site/public/fig.json'))
+
+
+class TestLinkOrder(unittest.TestCase):
+    """The static export's figures must end up as the same file as the site's, also when the site's files are
+    shared with a previous commit that stored them twice (a full copy made before 0.4.7, or by hand). 0.4.7 linked
+    html/build first and then relinked site/public to the previous commit, leaving every figure stored twice while
+    reporting it as linked."""
+
+    def test_figures_are_stored_once_when_the_previous_commit_stored_them_twice(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            latest = root / 'latest'
+            for folder in ('_build/html/build', '_build/site/public'):
+                write(latest / folder / 'fig1.json', 'figure one')
+            write(latest / '_build' / 'html' / 'index.html', '<html>')
+            previous = root / 'previous'
+            for folder in ('_build/html/build', '_build/site/public'):
+                write(previous / folder / 'fig1.json', 'figure one')      # two separate copies
+
+            report = save_build(latest, root / 'commit', previous=previous)
+
+            commit = root / 'commit' / '_build'
+            self.assertTrue(os.path.samefile(commit / 'html/build/fig1.json', commit / 'site/public/fig1.json'))
+            self.assertTrue(os.path.samefile(commit / 'site/public/fig1.json', previous / '_build/site/public/fig1.json'))
+            self.assertEqual(report.stored_bytes, len('figure one') + len('<html>'))
+            self.assertEqual(report.shared_bytes, len('figure one'))
+
+    def test_the_report_counts_what_is_on_disk(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            latest = root / 'latest'
+            write(latest / '_build' / 'html' / 'build' / 'fig1.json', 'figure one')
+            write(latest / '_build' / 'site' / 'public' / 'fig1.json', 'figure one')
+            write(latest / '_build' / 'site' / 'config.json', '{}')
+            report = save_build(latest, root / 'commit')
+            self.assertEqual(report.stored_bytes, len('figure one') + len('{}'))
+            self.assertEqual(report.shared_bytes, 0)

@@ -37,7 +37,9 @@ SAVED_BUILD_PARTS = ("_build/html", "_build/site")
 # The static export's assets folder and the site's figures folder hold the same files
 _SAME_FILES = (("_build/html/build", "_build/site/public"),)
 
-Report = namedtuple("Report", "copied_bytes linked_bytes")
+# stored_bytes: what the saved build takes on disk, each file counted once. shared_bytes: the part of it that other
+# saved builds also hold, so removing this build would not free it.
+Report = namedtuple("Report", "stored_bytes shared_bytes")
 
 
 def _same(a: Path, b: Path) -> bool:
@@ -65,7 +67,7 @@ def save_build(latest: Path, commit: Path, previous: Optional[Path] = None,
         parts: The folders under `latest` to keep
 
     Returns:
-        Report: bytes copied, and bytes stored as links instead
+        Report: what the saved build takes on disk, and how much of it is shared with other saved builds
     """
     latest, commit = Path(latest), Path(commit)
     staging = commit.with_name(commit.name + ".saving")
@@ -77,10 +79,17 @@ def save_build(latest: Path, commit: Path, previous: Optional[Path] = None,
         if source.is_dir():
             shutil.copytree(source, staging / part, symlinks=False)
 
-    copied = linked = 0
-    for path in sorted(p for p in staging.rglob("*") if p.is_file() and not p.is_symlink()):
+    # Files outside the duplicate folders are settled first (shared with the previous commit where identical),
+    # then each duplicate links to whatever its original ended up as. The other order relinked an original to the
+    # previous commit after its duplicate had been linked to it, leaving the two stored apart.
+    files = sorted(p for p in staging.rglob("*") if p.is_file() and not p.is_symlink())
+    duplicate_dirs = [duplicate for duplicate, _ in _SAME_FILES]
+
+    def is_duplicate(path):
+        return any(str(path.relative_to(staging)).startswith(d + "/") for d in duplicate_dirs)
+
+    for path in [p for p in files if not is_duplicate(p)] + [p for p in files if is_duplicate(p)]:
         relative = path.relative_to(staging)
-        size = path.stat().st_size
         candidates = []
         for duplicate_dir, original_dir in _SAME_FILES:
             if str(relative).startswith(duplicate_dir + "/"):
@@ -91,12 +100,23 @@ def save_build(latest: Path, commit: Path, previous: Optional[Path] = None,
             if _same(path, candidate):
                 if not os.path.samefile(path, candidate):
                     _link_over(path, candidate)
-                linked += size
                 break
-        else:
-            copied += size
 
     if commit.exists():
         shutil.rmtree(commit)
     os.replace(staging, commit)
-    return Report(copied, linked)
+    return _report(commit)
+
+
+def _report(folder: Path) -> Report:
+    """Count what folder takes on disk from the files themselves, each once, after all linking is done."""
+    inside = {}
+    for path in folder.rglob("*"):
+        if path.is_file() and not path.is_symlink():
+            info = path.stat()
+            key = (info.st_dev, info.st_ino)
+            count, size, links = inside.get(key, (0, info.st_size, info.st_nlink))
+            inside[key] = (count + 1, size, links)
+    stored = sum(size for _, size, _ in inside.values())
+    shared = sum(size for count, size, links in inside.values() if links > count)
+    return Report(stored, shared)
