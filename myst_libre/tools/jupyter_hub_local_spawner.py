@@ -26,6 +26,7 @@ if TYPE_CHECKING:
 from ..constants import (
     DEFAULT_PORT_RANGE,
     DEFAULT_CONTAINER_STOP_TIMEOUT,
+    DEFAULT_JUPYTER_READY_TIMEOUT,
     TOKEN_DIGEST_SIZE,
     TOKEN_REDACTED,
     METADATA_PROBE_ADDRESS,
@@ -120,6 +121,12 @@ class JupyterHubLocalSpawner(AbstractClass):
             - metadata_probe_image: Minimal image used for that probe.
                 Default: 'busybox:latest'. Must be pullable or already present.
 
+        Optional kwargs (startup):
+            - jupyter_ready_timeout: Seconds to wait for the Jupyter server in the
+                new container to answer before giving up. Default: 120.
+                spawn_jupyter_hub does not return until the server answers, so
+                mystmd never sends a request to a server that is still starting.
+
         Optional kwargs (resource limits):
             - cpu_limit: CPU limit for the container. None = unlimited (default).
                 Float/int = number of CPU cores (e.g., 2.0).
@@ -181,6 +188,11 @@ class JupyterHubLocalSpawner(AbstractClass):
         self.host_path_prefix: Optional[str] = kwargs.get('host_path_prefix')
         self.container_path_prefix: str = kwargs.get('container_path_prefix', '/')
         self.enable_dind: bool = kwargs.get('enable_dind', False)
+
+        # How long spawn_jupyter_hub waits for the Jupyter server to answer
+        self.jupyter_ready_timeout: int = kwargs.get(
+            'jupyter_ready_timeout', DEFAULT_JUPYTER_READY_TIMEOUT
+        )
 
         # Data is never fetched automatically; see _ensure_dataset
         self.allow_repo2data_download: bool = kwargs.get('allow_repo2data_download', False)
@@ -534,8 +546,12 @@ class JupyterHubLocalSpawner(AbstractClass):
                 self.jh_url = f"http://{container_ip}:{self.port}"
                 self.logger.info(f"🐳❤️🐳 Docker-in-Docker mode (DinD): Using Jupyter URL: {self.jh_url}")
 
-                # Wait for Jupyter server to be ready
-                self._wait_for_jupyter_ready(container_ip)
+            # mystmd sends its first request as soon as it reaches a notebook,
+            # and a refused request ends the build with only "fetch failed".
+            # Do not hand over the URL until the server answers. A jupyter-book
+            # build container runs no server, so there is nothing to wait for.
+            if not jb_build_command:
+                self._wait_for_jupyter_ready(self.jh_url, timeout=self.jupyter_ready_timeout)
 
             # Log status information
             output_logs.extend(self._log_spawn_status())
@@ -548,6 +564,13 @@ class JupyterHubLocalSpawner(AbstractClass):
             )
             self._stats_collector.start()
 
+        except ContainerError as e:
+            # Raised once the container exists (Jupyter never answered, or no
+            # IP in Docker-in-Docker mode), so it has to be removed here
+            self.logger.error(f"Could not spawn JupyterHub: {e}")
+            output_logs.append(f"Error: {e}")
+            self.cleanup()
+            raise
         except (docker.errors.APIError, docker.errors.DockerException, OSError, ValueError, AttributeError) as e:
             self.logger.error(f"Could not spawn JupyterHub: {e}")
             output_logs.append(f"Error: {e}")
@@ -1114,41 +1137,61 @@ class JupyterHubLocalSpawner(AbstractClass):
             self.logger.error(f"Error getting container logs: {e}")
             return f"Error retrieving logs: {e}"
 
-    def _wait_for_jupyter_ready(self, container_ip: str, timeout: int = 30) -> None:
+    def _wait_for_jupyter_ready(
+        self, jupyter_url: str, timeout: int = DEFAULT_JUPYTER_READY_TIMEOUT
+    ) -> None:
         """
-        Wait for Jupyter server to be ready for connections.
+        Wait until the Jupyter server at jupyter_url answers /api/status.
+
+        Stops early if the container exits, since a server that has exited will
+        never answer. Either error carries the end of the container's log, which
+        is removed with the container and would otherwise be lost.
 
         Args:
-            container_ip: IP address of the Jupyter container
-            timeout: Maximum seconds to wait for server to be ready
+            jupyter_url: Base URL of the server, e.g. http://localhost:8888
+            timeout: Maximum seconds to wait
 
         Raises:
-            ContainerError: If server doesn't become ready within timeout
+            ContainerError: If the container exits, or the server does not
+                answer within timeout
         """
         import time
         import urllib.request
         import urllib.error
 
-        jupyter_url = f"http://{container_ip}:{self.port}"
-        start_time = time.time()
+        start = time.monotonic()
+        last_error = None
 
-        while time.time() - start_time < timeout:
+        while time.monotonic() - start < timeout:
             try:
-                # Create request with authentication token
                 req = urllib.request.Request(
                     f"{jupyter_url}/api/status",
                     headers={"Authorization": f"token {self.jh_token}"}
                 )
-                response = urllib.request.urlopen(req, timeout=2)
-                if response.status == 200:
-                    self.logger.info(f"🕸️🐳✅ Jupyter server at {jupyter_url} is ready")
-                    return
-            except (urllib.error.URLError, urllib.error.HTTPError, OSError) as e:
-                # Server not ready yet, wait and retry
-                self.logger.info(f"Jupyter not ready yet: {e}")
-                time.sleep(1)
-                continue
+                with urllib.request.urlopen(req, timeout=2) as response:
+                    if response.status == 200:
+                        self.logger.info(
+                            f"🕸️🐳✅ Jupyter server at {jupyter_url} answered after "
+                            f"{time.monotonic() - start:.1f} s"
+                        )
+                        return
+                    last_error = f"HTTP {response.status}"
+            except (urllib.error.URLError, OSError) as e:
+                last_error = str(e)
+
+            if not self.is_running():
+                status = self.container.status if self.container else 'missing'
+                raise ContainerError(
+                    f"The Jupyter container {status} before the server at {jupyter_url} "
+                    f"answered. Last lines of the container log:\n"
+                    f"{self.get_container_logs(tail=30)}"
+                )
+
+            self.logger.debug(f"Jupyter at {jupyter_url} not answering yet: {last_error}")
+            time.sleep(1)
 
         raise ContainerError(
-            f"Jupyter server at {jupyter_url} did not become ready within {timeout} seconds"
+            f"The Jupyter server at {jupyter_url} did not answer within {timeout} seconds "
+            f"(last error: {last_error}). Last lines of the container log:\n"
+            f"{self.get_container_logs(tail=30)}"
         )

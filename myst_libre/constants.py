@@ -24,6 +24,12 @@ CATALOG_PAGE_SIZE = 1000
 DEFAULT_PORT_RANGE: Tuple[int, int] = (8888, 10000)
 DEFAULT_CONTAINER_STOP_TIMEOUT = 10
 
+# Seconds to wait for the Jupyter server in a new container to answer before
+# giving up. An image with JupyterLab and several server extensions can take
+# 25 seconds to start even when its files are already in the page cache, and
+# longer straight after a pull.
+DEFAULT_JUPYTER_READY_TIMEOUT = 120
+
 # Resource Limits (for "max" mode)
 RESOURCE_RESERVE_CPUS = 1          # CPU cores to reserve for host
 RESOURCE_RESERVE_MEMORY_GB = 2     # GB of RAM to reserve for host

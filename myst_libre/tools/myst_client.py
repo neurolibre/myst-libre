@@ -281,6 +281,19 @@ class MystMD(AbstractClass):
             with open(stdout_path, 'r') as f:
                 all_output = f.read()
 
+            # The output alone may not say that myst failed (a refused request
+            # to Jupyter prints only "fetch failed"), so state the exit code.
+            # Callers get the output back either way, as before.
+            if process.returncode != 0:
+                message = (
+                    f"⛔️ myst command failed: the process exited with code "
+                    f"{process.returncode}"
+                )
+                self.logger.error(message)
+                if all_output and not all_output.endswith("\n"):
+                    all_output += "\n"
+                all_output += message + "\n"
+
             return all_output, ""
 
         except subprocess.TimeoutExpired:
