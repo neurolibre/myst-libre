@@ -94,6 +94,9 @@ class MystMD(AbstractClass):
         self.build_dir = build_dir
         self.env_vars = env_vars
         self.run_pid: Optional[int] = None
+        # Exit code of the last run_command; None while it runs, or if it was
+        # killed or could not be started
+        self.last_returncode: Optional[int] = None
 
         self.cprint("␤[Preflight checks]", "light_grey")
         self._check_node_installed()
@@ -198,6 +201,7 @@ class MystMD(AbstractClass):
         stderr_path = None
         keep_output = output_path is not None
         start_offset = 0
+        self.last_returncode = None
 
         try:
             # Combine the current environment with the provided env_vars
@@ -293,6 +297,7 @@ class MystMD(AbstractClass):
 
             # Final flush — pick up anything written between last poll and exit
             self._tail_file(stdout_path, output_pos, "light_grey")
+            self.last_returncode = process.returncode
 
             # Read complete output
             with open(stdout_path, 'r') as f:

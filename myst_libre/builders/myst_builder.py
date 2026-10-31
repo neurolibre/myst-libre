@@ -7,6 +7,7 @@ High-level builder for MyST projects with JupyterHub integration.
 import json
 import logging
 import shutil
+import time
 from typing import List, Optional
 from pathlib import Path
 
@@ -101,6 +102,8 @@ class MystBuilder(AbstractClass):
 
         super().__init__()
         self.myst_client = MystMD(self.build_dir, self.env_vars)
+        # Whether the last build worked (see build); None before any build
+        self.succeeded: Optional[bool] = None
 
     def set_env(self, key: str, value: str):
         """
@@ -160,17 +163,19 @@ class MystBuilder(AbstractClass):
             self.cprint(f'Removed an incompletely installed theme, mystmd will install it again: {theme}', 'yellow')
 
         build_args = ('build',) + args
+        started = time.time()
         logs = self.myst_client.build(
             *build_args, user=user, group=group, timeout=timeout,
             output_path=output_path
         )
 
-        # Check if build was successful
-        build_failed = logs and (
-            'Error' in logs or
-            'error:' in logs.lower() or
-            'failed' in logs.lower()
-        )
+        # A build works when mystmd exits normally and, for --html, wrote the
+        # site during this build. Words in the output do not decide it: a
+        # notebook that raises puts "Error" there while the rest of the site is
+        # built and exported, and that site must still be saved. Notebook
+        # errors stay in the logs for the author to read.
+        self.succeeded = self._build_succeeded(args, started)
+        build_failed = not self.succeeded
 
         if not build_failed and self.hub is not None:
             # Save the successful build
@@ -178,6 +183,19 @@ class MystBuilder(AbstractClass):
             self.hub.rees.save_successful_build()
 
         return logs
+
+    def _build_succeeded(self, args, started: float) -> bool:
+        """mystmd exited with 0 and, if the build exports HTML, wrote _build/html/index.html after started."""
+        if getattr(self.myst_client, 'last_returncode', None) != 0:
+            return False
+        if '--html' not in args:
+            return True
+        index = Path(self.build_dir) / '_build' / 'html' / 'index.html'
+        try:
+            # one second of slack for filesystems that store whole seconds
+            return index.stat().st_mtime >= started - 1
+        except OSError:
+            return False
 
     def cleanup(self):
         """Kill the myst process tree and release all resources.
