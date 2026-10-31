@@ -4,11 +4,55 @@ myst_builder.py
 High-level builder for MyST projects with JupyterHub integration.
 """
 
-from typing import Optional
+import json
+import logging
+import shutil
+from typing import List, Optional
 from pathlib import Path
 
 from ..tools import JupyterHubLocalSpawner, MystMD
 from ..abstract_class import AbstractClass
+
+
+def remove_incomplete_themes(build_dir: str) -> List[str]:
+    """
+    Remove site themes under _build/templates whose npm install is incomplete.
+
+    mystmd downloads and installs a site theme only when the theme's folder is
+    missing. _build is kept between builds so executed notebook outputs can be
+    reused, and an interrupted install is kept with it: every later build then
+    fails when the theme server cannot load its packages ("Cannot find module
+    'express'"). A theme counts as complete when every dependency listed in its
+    package.json has a package.json under node_modules. Removing an incomplete
+    theme makes mystmd download and install it again. Nothing else in _build
+    is touched.
+
+    Args:
+        build_dir: The MyST project folder (the one holding _build)
+
+    Returns:
+        The theme folders that were removed
+    """
+    removed = []
+    for manifest in sorted(Path(build_dir).glob('_build/templates/site/*/*/package.json')):
+        theme = manifest.parent
+        try:
+            dependencies = json.loads(manifest.read_text()).get('dependencies', {}) or {}
+        except (OSError, ValueError) as e:
+            missing = [f'(unreadable package.json: {e})']
+        else:
+            missing = [
+                name for name in dependencies
+                if not (theme / 'node_modules' / name / 'package.json').is_file()
+            ]
+        if missing:
+            logging.warning(
+                f"Theme at {theme} has an incomplete install (missing: "
+                f"{', '.join(missing)}). Removing it so mystmd installs it again."
+            )
+            shutil.rmtree(theme)
+            removed.append(str(theme))
+    return removed
 
 
 class MystBuilder(AbstractClass):
@@ -79,7 +123,8 @@ class MystBuilder(AbstractClass):
         *args: str,
         user: Optional[str] = None,
         group: Optional[str] = None,
-        timeout: Optional[int] = None
+        timeout: Optional[int] = None,
+        output_path: Optional[str] = None
     ) -> str:
         """
         Build the MyST project.
@@ -100,6 +145,8 @@ class MystBuilder(AbstractClass):
             user: Optional username to run as
             group: Optional group to run as
             timeout: Optional timeout in seconds for the build process
+            output_path: Optional file mystmd's output is also written to while
+                the build runs, so it can be followed live (see MystMD.run_command)
 
         Returns:
             Build output logs
@@ -109,9 +156,13 @@ class MystBuilder(AbstractClass):
         else:
             self.cprint('Starting MyST build (no execution)', 'yellow')
 
+        for theme in remove_incomplete_themes(self.build_dir):
+            self.cprint(f'Removed an incompletely installed theme, mystmd will install it again: {theme}', 'yellow')
+
         build_args = ('build',) + args
         logs = self.myst_client.build(
-            *build_args, user=user, group=group, timeout=timeout
+            *build_args, user=user, group=group, timeout=timeout,
+            output_path=output_path
         )
 
         # Check if build was successful

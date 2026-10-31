@@ -167,7 +167,8 @@ class MystMD(AbstractClass):
         env_vars: Optional[Dict[str, str]] = None,
         user: Optional[str] = None,
         group: Optional[str] = None,
-        timeout: Optional[int] = None
+        timeout: Optional[int] = None,
+        output_path: Optional[str] = None
     ) -> Tuple[str, str]:
         """
         Run a command using the MyST executable.
@@ -180,6 +181,11 @@ class MystMD(AbstractClass):
             timeout: Optional timeout in seconds. If the process does not
                      complete within this time, the entire process tree is
                      killed and a subprocess.TimeoutExpired is raised.
+            output_path: Optional file to write the command's output to, so it
+                     can be read while the command runs (a live log). It is
+                     appended to and kept afterwards; only this run's output is
+                     returned. By default the output goes to a temporary file
+                     that is deleted when the command ends.
 
         Returns:
             Tuple of (stdout_log, stderr_log)
@@ -190,6 +196,8 @@ class MystMD(AbstractClass):
         command = [self.executable] + list(args)
         stdout_path = None
         stderr_path = None
+        keep_output = output_path is not None
+        start_offset = 0
 
         try:
             # Combine the current environment with the provided env_vars
@@ -223,10 +231,18 @@ class MystMD(AbstractClass):
             # traceback content if anything goes wrong with the second
             # file/stream.  A single interleaved stream guarantees every
             # line — including error tracebacks — is visible in the logs.
-            output_file = tempfile.NamedTemporaryFile(
-                mode='w+', suffix='.myst.log', delete=False
-            )
-            stdout_path = output_file.name
+            if output_path:
+                parent = os.path.dirname(output_path)
+                if parent:
+                    os.makedirs(parent, exist_ok=True)
+                start_offset = os.path.getsize(output_path) if os.path.exists(output_path) else 0
+                output_file = open(output_path, 'a')
+                stdout_path = output_path
+            else:
+                output_file = tempfile.NamedTemporaryFile(
+                    mode='w+', suffix='.myst.log', delete=False
+                )
+                stdout_path = output_file.name
             stderr_path = None  # not used, stderr merged into stdout
 
             # Build subprocess arguments
@@ -258,7 +274,7 @@ class MystMD(AbstractClass):
             # Poll loop: fully cooperative under gevent.
             # time.sleep() is monkey-patched to gevent.sleep(), yielding
             # to the hub so heartbeats and other greenlets can run.
-            output_pos = 0
+            output_pos = start_offset
             deadline = (time.monotonic() + timeout) if timeout else None
 
             while process.poll() is None:
@@ -279,6 +295,7 @@ class MystMD(AbstractClass):
 
             # Read complete output
             with open(stdout_path, 'r') as f:
+                f.seek(start_offset)
                 all_output = f.read()
 
             # The output alone may not say that myst failed (a refused request
@@ -290,9 +307,12 @@ class MystMD(AbstractClass):
                     f"{process.returncode}"
                 )
                 self.logger.error(message)
-                if all_output and not all_output.endswith("\n"):
-                    all_output += "\n"
-                all_output += message + "\n"
+                separator = "\n" if all_output and not all_output.endswith("\n") else ""
+                all_output += separator + message + "\n"
+                if keep_output:
+                    # Readers of the live file should see it too
+                    with open(stdout_path, 'a') as f:
+                        f.write(separator + message + "\n")
 
             return all_output, ""
 
@@ -311,7 +331,7 @@ class MystMD(AbstractClass):
             # timed out and was killed, or errored
             if self.run_pid is not None:
                 self._forget_process(self.run_pid)
-            self._cleanup_files(stdout_path, stderr_path)
+            self._cleanup_files(None if keep_output else stdout_path, stderr_path)
 
     # ------------------------------------------------------------------
     # Orphan tracking
@@ -586,7 +606,8 @@ class MystMD(AbstractClass):
         *args: str,
         user: Optional[str] = None,
         group: Optional[str] = None,
-        timeout: Optional[int] = None
+        timeout: Optional[int] = None,
+        output_path: Optional[str] = None
     ) -> str:
         """
         Build the MyST markdown project with specified arguments.
@@ -596,6 +617,8 @@ class MystMD(AbstractClass):
             user: Optional username to run command as
             group: Optional group to run command as
             timeout: Optional timeout in seconds for the build process
+            output_path: Optional file the output is also written to while the
+                build runs (see run_command)
 
         Returns:
             Combined stdout and stderr output
@@ -605,7 +628,8 @@ class MystMD(AbstractClass):
             env_vars=self.env_vars,
             user=user,
             group=group,
-            timeout=timeout
+            timeout=timeout,
+            output_path=output_path
         )
 
         combined_log = stdout_log
