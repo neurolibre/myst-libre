@@ -4,15 +4,21 @@ myst_builder.py
 High-level builder for MyST projects with JupyterHub integration.
 """
 
+import hashlib
 import json
 import logging
 import shutil
 import time
-from typing import List, Optional
+from typing import Dict, List, Optional
 from pathlib import Path
 
 from ..tools import JupyterHubLocalSpawner, MystMD
 from ..abstract_class import AbstractClass
+
+
+# What the cached notebook outputs in _build/execute were computed with. mystmd keys its cache on the code cells
+# only, so a new image or new data would otherwise leave old outputs in place. mystmd ignores this file.
+EXECUTION_INPUTS_FILE = '_build/neurolibre-execution-inputs.json'
 
 
 def remove_incomplete_themes(build_dir: str) -> List[str]:
@@ -104,6 +110,8 @@ class MystBuilder(AbstractClass):
         self.myst_client = MystMD(self.build_dir, self.env_vars)
         # Whether the last build worked (see build); None before any build
         self.succeeded: Optional[bool] = None
+        # Why the last build cleared mystmd's execution cache, or None if it kept it
+        self.execution_cache_cleared: Optional[str] = None
 
     def set_env(self, key: str, value: str):
         """
@@ -127,7 +135,8 @@ class MystBuilder(AbstractClass):
         user: Optional[str] = None,
         group: Optional[str] = None,
         timeout: Optional[int] = None,
-        output_path: Optional[str] = None
+        output_path: Optional[str] = None,
+        fresh_execution: bool = False
     ) -> str:
         """
         Build the MyST project.
@@ -150,6 +159,9 @@ class MystBuilder(AbstractClass):
             timeout: Optional timeout in seconds for the build process
             output_path: Optional file mystmd's output is also written to while
                 the build runs, so it can be followed live (see MystMD.run_command)
+            fresh_execution: Run every notebook, ignoring outputs cached by earlier
+                builds. Without it, the cache is still cleared when the execution
+                image or the data requirement changed (see _prepare_execution_cache).
 
         Returns:
             Build output logs
@@ -161,6 +173,10 @@ class MystBuilder(AbstractClass):
 
         for theme in remove_incomplete_themes(self.build_dir):
             self.cprint(f'Removed an incompletely installed theme, mystmd will install it again: {theme}', 'yellow')
+
+        self.execution_cache_cleared = None
+        if '--execute' in args:
+            self.execution_cache_cleared = self._prepare_execution_cache(fresh_execution, user, group, output_path)
 
         build_args = ('build',) + args
         started = time.time()
@@ -183,6 +199,59 @@ class MystBuilder(AbstractClass):
             self.hub.rees.save_successful_build()
 
         return logs
+
+    def _execution_inputs(self) -> Dict[str, Optional[str]]:
+        """The execution image's ID and a hash of binder/data_requirement.json."""
+        image = getattr(getattr(self.hub, 'rees', None), 'docker_image', None) if self.hub is not None else None
+        requirement = Path(self.build_dir) / 'binder' / 'data_requirement.json'
+        try:
+            data = hashlib.sha256(requirement.read_bytes()).hexdigest()
+        except OSError:
+            data = None
+        image_id = getattr(image, 'id', None)
+        if not isinstance(image_id, str):
+            image_id = str(image) if image is not None else None
+        return {'image': image_id, 'data_requirement': data}
+
+    def _prepare_execution_cache(self, fresh: bool, user=None, group=None, output_path=None) -> Optional[str]:
+        """Clear mystmd's execution cache when its outputs may not match this build, and record this build's inputs.
+
+        Cleared, with mystmd's own `myst clean --execute --yes`, when a fresh run is asked for, when the image or
+        the data requirement differs from the build that filled the cache, or when the cache has no record of its
+        inputs. Returns the reason, or None if the cache was kept (or there was none).
+        """
+        marker = Path(self.build_dir) / EXECUTION_INPUTS_FILE
+        inputs = self._execution_inputs()
+        try:
+            recorded = json.loads(marker.read_text())
+        except (OSError, ValueError):
+            recorded = None
+
+        if fresh:
+            reason = 'a fresh run of every notebook was asked for'
+        elif recorded is None:
+            reason = 'the image and data the cached outputs were computed with are not recorded'
+        else:
+            changed = [name.replace('_requirement', '') for name in inputs if recorded.get(name) != inputs[name]]
+            reason = f"the {' and the '.join(changed)} changed since the cached outputs were computed" if changed else None
+
+        execute_dir = Path(self.build_dir) / '_build' / 'execute'
+        cleared = None
+        if reason and execute_dir.is_dir() and any(execute_dir.iterdir()):
+            self.cprint(f'Running every notebook again: {reason}.', 'yellow')
+            self.myst_client.run_command('clean', '--execute', '--yes', env_vars=self.env_vars,
+                                         user=user, group=group, output_path=output_path)
+            if execute_dir.exists():
+                self.logger.warning(f'myst clean --execute left {execute_dir} in place')
+            cleared = reason
+
+        try:
+            marker.parent.mkdir(parents=True, exist_ok=True)
+            marker.write_text(json.dumps(inputs))
+        except (OSError, TypeError, ValueError) as e:
+            # Recording must never stop a build; the next build then clears the cache to be safe
+            self.logger.warning(f'Could not record the execution inputs in {marker}: {e}')
+        return cleared
 
     def _build_succeeded(self, args, started: float) -> bool:
         """mystmd exited with 0 and, if the build exports HTML, wrote _build/html/index.html after started."""
