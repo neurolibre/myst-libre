@@ -16,6 +16,7 @@ os.environ["GIT_PYTHON_REFRESH"] = "quiet"
 from git import Repo, GitCommandError
 
 from ..abstract_class import AbstractClass
+from .saved_build import save_build
 from ..models import REESConfig, CommitInfo, BuildContext
 from ..exceptions import GitOperationError, ConfigurationError
 from ..utils.validation import sanitize_dataset_name
@@ -417,8 +418,10 @@ class BuildSourceManager(AbstractClass):
         """
         Save the current successful build.
 
-        Copies 'latest' directory to a commit-specific folder and updates
-        latest.txt with the commit hash.
+        Saves the build in the 'latest' directory to a commit-specific folder
+        and updates latest.txt with the commit hash. Only the parts read from
+        a saved commit are kept (_build/html and _build/site), and identical
+        files are hard-linked: see saved_build.py.
 
         Returns:
             True if saved successfully
@@ -438,14 +441,21 @@ class BuildSourceManager(AbstractClass):
                 / self.config.gh_repo_commit_hash
             )
 
-            # Remove existing commit directory if present
             if commit_dir.exists():
-                self.print_warning(f"Removing existing build at {self.config.gh_repo_commit_hash}")
-                shutil.rmtree(commit_dir)
+                self.print_warning(f"Replacing the existing build at {self.config.gh_repo_commit_hash}")
 
-            # Copy latest to commit-specific directory
+            # The previous successful build, to share unchanged files with
+            previous_hash = self.read_latest_successful_hash()
+            previous_dir = commit_dir.parent / previous_hash if previous_hash else None
+            if previous_dir is not None and not previous_dir.is_dir():
+                previous_dir = None
+
             self.print_success(f"Preserving successful build to {self.config.gh_repo_commit_hash}")
-            shutil.copytree(self.build_dir, commit_dir, symlinks=False)
+            report = save_build(Path(self.build_dir), commit_dir, previous=previous_dir)
+            self.logger.info(
+                f"Saved build: {report.copied_bytes / 1e6:.1f} MB copied, "
+                f"{report.linked_bytes / 1e6:.1f} MB stored as links to identical files"
+            )
 
             # Update latest.txt
             latest_txt_path = (
