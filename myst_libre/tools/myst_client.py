@@ -22,7 +22,7 @@ from pathlib import Path
 _ANSI_RE = re.compile(r'\x1b\[[0-9;]*[a-zA-Z]')
 
 from ..abstract_class import AbstractClass
-from ..constants import PROCESS_STATE_FILE
+from ..constants import PROCESS_STATE_FILE, TOKEN_REDACTED
 
 
 def _process_start_key(pid: int) -> Optional[str]:
@@ -213,7 +213,8 @@ class MystMD(AbstractClass):
             if 'JUPYTER_BASE_URL' in env:
                 self.logger.info(f"JUPYTER_BASE_URL: {env['JUPYTER_BASE_URL']}")
             if 'JUPYTER_TOKEN' in env:
-                self.logger.info(f"JUPYTER_TOKEN: {env['JUPYTER_TOKEN']}")
+                # Never the value: worker logs are collected into build logs
+                self.logger.info(f"JUPYTER_TOKEN: {TOKEN_REDACTED}")
             if 'port' in env:
                 self.logger.info(f"port: {env['port']}")
 

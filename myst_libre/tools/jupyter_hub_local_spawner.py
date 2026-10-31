@@ -867,7 +867,11 @@ class JupyterHubLocalSpawner(AbstractClass):
 
             self.container = self.rees.docker_client.containers.run(
                 self.rees.docker_image,
-                ports={f'{self.port}/tcp': self.port},
+                # Loopback only: mystmd connects through localhost, and the
+                # token grants code execution, so nothing outside the host may
+                # reach the server. (Docker-in-Docker connects to the
+                # container's own address and does not use this mapping.)
+                ports={f'{self.port}/tcp': ('127.0.0.1', self.port)},
                 environment={
                     "JUPYTER_TOKEN": self.jh_token,
                     "port": str(self.port),
