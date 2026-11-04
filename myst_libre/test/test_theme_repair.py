@@ -15,7 +15,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from myst_libre.builders.myst_builder import MystBuilder, remove_incomplete_themes
+from myst_libre.builders.myst_builder import MystBuilder, remove_incomplete_themes, remove_site_themes
 
 
 def _theme(build_dir, name, dependencies, installed):
@@ -81,3 +81,38 @@ class TestRemoveIncompleteThemes(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class TestFreshBuildRefreshesTheTheme(unittest.TestCase):
+    """A fresh build installs the current release of its site theme: a project otherwise keeps the theme of its
+    first build, and moranebienvenu/stroke_article's predated the Plotly renderer (2026-11-04)."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.deps = {'express': '^4.18.2'}
+
+    def _build(self, **kwargs):
+        with patch('myst_libre.builders.myst_builder.MystMD') as client:
+            client.return_value.build.return_value = 'Built'
+            builder = MystBuilder(build_dir=self.tmp.name)
+            builder.build('--html', **kwargs)
+        return builder
+
+    def test_a_fresh_build_removes_the_cached_theme_and_keeps_the_rest_of_build(self):
+        theme = _theme(self.tmp.name, 'article-theme', self.deps, ['express'])
+        site = os.path.join(self.tmp.name, '_build', 'site')
+        os.makedirs(site)
+        builder = self._build(fresh_execution=True)
+        self.assertFalse(os.path.exists(theme))
+        self.assertEqual(builder.themes_refreshed, [theme])
+        self.assertTrue(os.path.isdir(site))
+
+    def test_an_ordinary_build_keeps_a_complete_theme(self):
+        theme = _theme(self.tmp.name, 'article-theme', self.deps, ['express'])
+        builder = self._build()
+        self.assertTrue(os.path.isdir(theme))
+        self.assertEqual(builder.themes_refreshed, [])
+
+    def test_no_theme_yet_is_fine(self):
+        self.assertEqual(remove_site_themes(self.tmp.name), [])

@@ -62,6 +62,30 @@ def remove_incomplete_themes(build_dir: str) -> List[str]:
     return removed
 
 
+def remove_site_themes(build_dir: str) -> List[str]:
+    """
+    Remove the site themes cached under _build/templates, so mystmd installs the current release.
+
+    mystmd downloads a site theme only when its folder is missing, and _build is
+    kept between builds, so a project keeps the theme release of its first build
+    for good. A fresh build is asked for to start over, and it used to clear only
+    the notebook outputs: moranebienvenu/stroke_article was run afresh and still
+    drew none of its Plotly figures, because its cached article-theme predated
+    the theme's Plotly renderer (2026-11-04). Nothing else in _build is touched.
+
+    Args:
+        build_dir: The MyST project folder (the one holding _build)
+
+    Returns:
+        The theme folders that were removed
+    """
+    removed = []
+    for manifest in sorted(Path(build_dir).glob('_build/templates/site/*/*/package.json')):
+        shutil.rmtree(manifest.parent)
+        removed.append(str(manifest.parent))
+    return removed
+
+
 class MystBuilder(AbstractClass):
     """
     High-level builder for MyST markdown projects.
@@ -160,8 +184,10 @@ class MystBuilder(AbstractClass):
             output_path: Optional file mystmd's output is also written to while
                 the build runs, so it can be followed live (see MystMD.run_command)
             fresh_execution: Run every notebook, ignoring outputs cached by earlier
-                builds. Without it, the cache is still cleared when the execution
-                image or the data requirement changed (see _prepare_execution_cache).
+                builds, and install the current release of the site theme (see
+                remove_site_themes). Without it, the cache is still cleared when the
+                execution image or the data requirement changed (see
+                _prepare_execution_cache).
 
         Returns:
             Build output logs
@@ -173,6 +199,9 @@ class MystBuilder(AbstractClass):
 
         for theme in remove_incomplete_themes(self.build_dir):
             self.cprint(f'Removed an incompletely installed theme, mystmd will install it again: {theme}', 'yellow')
+        self.themes_refreshed = remove_site_themes(self.build_dir) if fresh_execution else []
+        for theme in self.themes_refreshed:
+            self.cprint(f'A fresh build installs the current release of its theme: removed {theme}', 'yellow')
 
         self.execution_cache_cleared = None
         if '--execute' in args:
